@@ -1,0 +1,8 @@
+*.o
+*.ko
+*.[oa]
+.idea/*
+*.log
+*.status
+*/build/*
+*/build/.gdbinit
