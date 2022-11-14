@@ -3301,6 +3301,7 @@ bool virtio_legacy_allowed(VirtIODevice *vdev)
     case VIRTIO_ID_9P:
     case VIRTIO_ID_RPROC_SERIAL:
     case VIRTIO_ID_CAIF:
+    case VIRTIO_ID_VGPU:
         return true;
     default:
         return false;

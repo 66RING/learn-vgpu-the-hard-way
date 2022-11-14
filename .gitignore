@@ -6,3 +6,5 @@
 *.status
 */build/*
 */build/.gdbinit
+
+qemu-6.0.0/compile_commands.json
