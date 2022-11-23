@@ -8,3 +8,10 @@
 */build/.gdbinit
 
 qemu-6.0.0/compile_commands.json
+driver/*.cmd
+driver/*.symvers
+driver/*es.order
+driver/*.mod
+
+driver/compile_commands.json
+driver/vgpu.mod.c

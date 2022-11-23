@@ -26,6 +26,7 @@ OBJECT_DECLARE_SIMPLE_TYPE(VirtIOVGPU, VIRTIO_VGPU)
 #define panic(msg) fprintf(stderr, msg);abort()
 
 typedef struct VirtIOVgpuConf VirtIOVgpuConf;
+typedef struct VgpuArgs VgpuArgs;
 
 struct VirtIOVgpuConf {
 	uint64_t mem_size;
@@ -36,6 +37,8 @@ struct VirtIOVGPU {
 	VirtIOVgpuConf conf;
     VirtQueue *vq;
 };
+
+#include "../../../../protocol/vgpu_common.h"
 
 #endif
 
