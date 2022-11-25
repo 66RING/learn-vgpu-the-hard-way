@@ -52,7 +52,8 @@ static struct virtio_device_id id_table[] = {
 
 static void send_command(VgpuArgs *args) {
 	printk("send_command");
-	struct scatterlist *send, *recv, *sgs[2];
+	struct scatterlist *sgs[2];
+	struct scatterlist sg_out, sg_in;
 
 	VgpuArgs *result;
 	result = kmalloc(sizeof(VgpuArgs), GFP_KERNEL);
@@ -60,10 +61,10 @@ static void send_command(VgpuArgs *args) {
 	memcpy(result, args, sizeof(VgpuArgs));
 
 	// 创建scatterlist, 与buf绑定
-	sg_init_one(send, args, sizeof(VgpuArgs));
-	sg_init_one(recv, result, sizeof(VgpuArgs));
-	sgs[0] = send;
-	sgs[1] = recv;
+	sg_init_one(&sg_out, args, sizeof(VgpuArgs));
+	sg_init_one(&sg_in, result, sizeof(VgpuArgs));
+	sgs[0] = &sg_out;
+	sgs[1] = &sg_in;
 
 	// TODO: 加锁, 多个程序同时访问驱动
 
@@ -96,6 +97,7 @@ static int vgpu_open(struct inode *inode, struct file *filp) {
 }
 
 static int vgpu_release(struct inode *inode, struct file *filp) {
+	// FIXME: bug 解除占用
 	printk("vgpu_release\n");
 	// TODO:
 	return 0;
@@ -116,17 +118,20 @@ static long vgpu_ioctl(struct file *filp, unsigned int _cmd, unsigned long _arg)
 		return -1;
 	}
 
+	printk("%d\n", arg->cmd);
 	switch (arg->cmd) {
 	case VGPU_CUDA_MALLOC:
+		send_command(arg);
 		break;
 	default:
 		break;
 	}
 
 	if((err=copy_to_user((void*)_arg, arg, sizeof(VgpuArgs)))!=0) {
-		printk("err copy_from_user");
+		printk("err copy_to_user");
 		return -1;
 	}
+
 	kfree(arg);
 	// TODO:
 	return 0;
@@ -169,7 +174,7 @@ static int virtio_probe(struct virtio_device *vdev) {
 	// 注册设备驱动
 	// 	绑定设备名称, 操作方法, 次设备号
 	misc_register(&vgpu_driver);
-	// 初始化锁
+	// TODO: 初始化锁
 	return 0;
 }
 
