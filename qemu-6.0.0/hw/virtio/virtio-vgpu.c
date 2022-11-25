@@ -3,6 +3,7 @@
 #include "qemu-common.h"
 #include "qemu/error-report.h"
 #include "qemu/main-loop.h"
+#include "qemu/iov.h"
 #include "hw/virtio/virtio-vgpu.h"
 #include "hw/qdev-properties.h"
 #include "sysemu/hostmem.h"
@@ -11,10 +12,49 @@
 #include "trace.h"
 #include "standard-headers/linux/virtio_ids.h"
 
+static void vgpu_cuda_malloc(VgpuArgs* args) {
+	printf("vgpu_cuda_malloc\n");
+	args->dst = 0xdeadbeef;
+}
 
 static void virtio_vgpu_handler(VirtIODevice *vdev, VirtQueue *vq)
 {
-	panic("unimplament virtio_vgpu_handler");
+	VgpuArgs *args;
+	VirtQueueElement *elem;
+
+	args = (VgpuArgs*)malloc(sizeof(VgpuArgs));
+	// virtio协议, 传入N个入M处的scatterlist, 可以从iovector中获取到
+	while(elem = virtqueue_pop(vq, sizeof(VirtQueueElement))) {
+		// WARN: error handling
+		// 从iovector中读取数据
+		iov_to_buf(elem->out_sg, elem->out_num, 0, args, sizeof(VgpuArgs));
+
+		// 读取数据后清除已经读出的数据
+		//  对iov及其长度进行修改
+		iov_discard_front(&elem->out_sg, &elem->out_num, sizeof(VgpuArgs));
+
+		// 根据vgpu协议执行响应的操作
+		switch (args->cmd){
+		case VGPU_CUDA_MALLOC:
+			vgpu_cuda_malloc(args);
+			break;
+		default:
+			panic("unknow command");
+			break;
+		}
+
+		// 数据更新后写回iovector
+		size_t s = iov_from_buf(elem->in_sg, elem->in_num, 0, args, sizeof(VgpuArgs));
+		// TODO: error handling
+
+		// 将处理完后的描述符索引更新到Used队列中
+		virtqueue_push(vq, elem, sizeof(VgpuArgs));
+		// 通知前端
+		virtio_notify(vdev, vq);
+	}
+
+out:
+	free(args);
 }
 
 static uint64_t virtio_vgpu_get_features(VirtIODevice *vdev, uint64_t features,

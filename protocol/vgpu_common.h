@@ -1,8 +1,6 @@
 #ifndef VGPU_COMMON_H
 #define VGPU_COMMON_H
 
-#include<inttypes.h>
-
 #define VIRTIO_ID_VGPU 30
 
 typedef struct VgpuArgs VgpuArgs;
@@ -30,6 +28,8 @@ struct VgpuArgs {
   uint64_t src_size;
   uint64_t dst;
   uint64_t dst_size;
+
+  uint64_t owner_id;
 
   enum VGPU_DIRECTION direction;
 };
