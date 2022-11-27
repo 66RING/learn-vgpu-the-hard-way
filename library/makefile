@@ -1,4 +1,4 @@
-# CUDA_H=/usr/local/cuda/include
+CUDA_H=/usr/local/cuda/include
 
 # local develop for now
 CUDA_H=/opt/cuda/include
