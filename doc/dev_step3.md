@@ -78,22 +78,6 @@ int main() {
 
 ## CUDA代码加载运行流程
 
-顺序如下:
-
-```
-__cudaRegisterFatBinary
-__cudaRegisterFunction
-cudaMalloc
-cudaMemcpy
-cudaConfigureCall
-cudaSetupArgument
-cudaLaunch
-cudaMemcpy
-cudaFree
-__cudaUnregisterFatBinary
-```
-
-
 ```
 # .gdbinit
 b __cudaRegisterFunction
@@ -106,6 +90,30 @@ b cudaFree
 b cudaSetupArgument
 b cudaMemcpy
 ```
+
+
+可以发现调用顺序如下
+
+```
+__cudaRegisterFatBinary     // 加载cuda二进制, 就相当于exec, 只不过是给gpu加载
+__cudaRegisterFunction      // 具体函数的加载, 一个cuda程序可能存在多个kernel, cuda kernel又有若干参数<<<>>>
+cudaMalloc                  // cuda申请内存
+cudaMemcpy                  // 数据在gpu内和系统内存直接拷贝
+cudaConfigureCall           // 准备kernel调用的配置信息, 如几个grid, block, 哪个stream等
+cudaSetupArgument           // 准备kernel调用的参数, 也就是函数参数
+cudaLaunch                  // 执行kernel调用
+cudaMemcpy                  // 执行完成数据拷贝会系统内存
+cudaFree                    // 释放gpu内存资源
+__cudaUnregisterFatBinary   // cuda程序执行完成, 计算资源从gpu中撤离
+```
+
+可以看到gpu相当于一个异步运行线程, 执行一个cuda程序前要先注册可能的调用, 执行完成后要卸载任务。
+
+一个kernel调用`kernel<<<grid, block,Ns,stream>>>(param list);`会被分解成三个调用:
+
+1. cudaConfigureCall
+2. cudaSetupArgument
+3. cudaLaunch
 
 
 ## CUDA API
@@ -197,6 +205,20 @@ TODO: review
 
 - TODO: 考虑mmap
     * 注意mmap的和非mmap的情况, 内存一致性
+
+
+### cudaConfigureCall
+
+```
+cudaError_t cudaConfigureCall(
+        dim3 gridDim,
+        dim3 blockDim,
+        size_t sharedMem,
+        cudaStream_t stream);
+```
+
+1. 前端保存用户配置
+2. 待`cudaLaunch`时发送给后端
 
 
 ### cudaLaunch && cuLaunchKernel

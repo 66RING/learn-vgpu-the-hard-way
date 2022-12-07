@@ -1,66 +1,98 @@
+---
+title: step2
+author: 66RING
+date: 2022-11-20
+tags: 
+- gpu
+- qemu
+mathjax: true
+---
+
+# Abstract
+
+
+# Preface
+
+
+# Overview
+
 # 第二阶段开发: API试个遍
 
 ## qemu虚拟设备
 
-- handler
-    * 从vqueue中获取事件元素抽象`VirtQueueElement* elem`
-    * 然后使用`iov_to_buf`从`elem->out_sg`抽象中获取参数, 使用`iov_discard_front`配合删除已用
-    * 参数获取完毕, 根据vgpu协议执行对应功能
-    * `iov_from_buf`写回iov, TODO: 为何要写回iov
-    * `virtqueue_push`, `virtio_notify`写回virtio used队列, 通知驱动
-    * 释放资源
+TODO: 理清virtio虚拟设备创建流程, virtio pci等
 
+设备realize的时候, 使用`virtio_add_queue`创建virtqueue, 并绑定virtqueue的处理函数
 
-## virtio内核驱动
-
+- virtqueue handler
+    * `virtqueue_pop`从avail ring中获取数据: 事件元素抽象`VirtQueueElement* elem`
+    * 然后使用`iov_to_buf`从`elem->out_sg`中获取参数, 使用`iov_discard_front`配合删除已用
+    * 数据获取完毕(相当于数据拷贝到内核空间, 这里就是从virtqueue空间拷贝出来), 根据vgpu协议执行对应功能
+    * `iov_from_buf`写回iov, 我们`virtqueue_add_sgs`传入的时候指定了有几个入出
+    * `virtqueue_push`将avail ring取出的数据(elem)放回到used ring
+    * `virtio_notify`通知前端
+    * 释放资源, buffer
     * API
+        + `virtqueue_pop`
+            + 从avail ring中取出数据
         + `iov_to_buf`
+            + 将数据从"virtqueue空间"拷贝到"handler空间"
             + 直接从iovec中读取数据`iov_to_buf(iov, iovcnt, offset, buf, bytes);
         + `iov_from_buf`
             + 写回`iov`
         + `iov_discard_front`
             + 从vec前端移除bytes个数据, 返回实际移除的数量, 传入iov和iovcnt更新`iov_discard_front(struct iovec **iov, unsigned int *iov_cnt, size_t bytes)`
         + `virtqueue_push`
-            + 写回到used队列
+            + 写回到used ring
         + `virtio_notify`
             + 通知guest驱动
+
+
+## virtio内核驱动
+
 - open
-    * 创建fd私有数据(链表), 保存到`filp->private`中
-        + TODO: 什么作用呢
-    * 向qcuda发送启动命令
-    * 仅是`BLOCK_SIZE`的传递
+    * TODO: `try_module_get(THIS_MODULE)`
+        + TODO: 测试是否必要
+    * 创建创建设备内存, 即`filp->private`
+        + 链表模拟设备上的内存, 后续会实现D2H, H2D的数据拷贝
+            + 内核链表的创建可以使用`INIT_LIST_HEAD(&head)`宏来初始化`struct list_head`
+    * 约定链表每个block的大小
+    * 向vgpu设备发送启动命令
+- release
+    * `kfree`释放open中申请的资源(设备内存)`filp->private`
+    * `module_put(THIS_MODULE)`
 - ioctl
-    * 从用户态拷贝数据(`args`)到内核态, `copy_from_user`
+    * 申请内核buffer读入用户态数据
+        + `copy_from_user`, 从用户态拷贝数据(`args`)到内核态
     * swtich做响应的功能
-    * 数据拷贝回用户态, `copy_to_user`
-    * 释放资源
-    * API
-        + `qcu_cudaMemcpy`
-            + `H2D`, `D2H`等用flag标记
-            + pA, pB就是`src`, `dst`抽象
-- cmd send
-    * `sg_init_one`创建两个scatterlist, 分别做收发??
-        + `virtqueue_add_sgs` api也要求传入两个list
+    * 内核buffer数据拷贝回用户态, `copy_to_user`
+    * 释放资源(内核buffer)
+    * CUDA API抽象
+        + 使用dst, src等明显意义的名字
+        + 还是使用ptr1, ptr2等位置标记的名字
+- command send
+    * `sg_init_one(&new_sg, buf, size)`创建若干个scatterlist, N个出M个入, 这里只需要一入一出
+        + 申请buffer，与待创建的sg绑定
+        + `virtqueue_add_sgs`向virtqueue传递scatterlist
     * `virtqueue_add_sgs`将scatterlist添加到vring中, 也是在内部转换整buf和desc的添加
         + linux/drivers/virtio/virtio_ring.c
-    * `virtqueue_kick`通知另一端
-    * `while virtqueue_get_buf()`等待返回
+    * `virtqueue_kick`通知后端
+    * `while virtqueue_get_buf()`等待后端处理完成
         + `virtqueue_is_broken`而外检测队列没有关闭
     * API
-        + `sg_init_one`
-            + scatterlist
+        + `sg_init_one(&new_sg, buf, size)`
+            + 新建scatterlist: `new_sg`, 与buf绑定
         + `virtqueue_add_sgs`
             + scatterlist添加到vring中
-            + TODO: details
+            + 传入的是scatterlist的数组，参数指定数组中多少个做输入, 多少个做输出
         + `virtqueue_get_buf`
             + get next used buffer, 可以用户检测后端是否处理完成
+            + 后端处理完成后会添加到used ring中, 所以可以使用`while`加`cpu_relax`的方式忙等
         + `virtqueue_is_broken`
             + 是否已经关闭
-        + `virtqueue_kick`通知另一端
-- release
-    * 释放open中申请的资源`filp->private`, `kfree`
-    * `module_put(THIS_MODULE)`
-
+        + `virtqueue_kick`通知后端
+- mmap
+    * 暂不实现
 - `virt_to_phys`
 
 
@@ -74,7 +106,7 @@
 如何查看cuda程序需要哪些API: 使用nm命令查看编译好的二进制文件的符号表, 然后查看[CUDA toolkit官网API文档](https://docs.nvidia.com/cuda/cuda-runtime-api/index.html)实现具体warpper库。
 
 - 资源分配类一般是可以抽象成`src`和`dst`的
-- TODO: 其他类型呢?
+- 或者可直接根据参数位置设置, 类似qemu中`opaque`的设计
 
 
 ### 最简单的CUDA程序
@@ -134,11 +166,7 @@ $ nm ./test | grep libcudart
     * virtio使用scatterlist传递buffer, N个入M个出, [The order is fixed (out followed by in)](https://lwn.net/Articles/239238)
 
 
-## TODO:
-
-- GFP in kernel means
-- 为何virtio使用scatterlist
-    * virito数据传递使用scatterlist, 一个scatterlist描述多个buffer
+## VirtIO流程
 
 virtio基本流程抽象:
 
@@ -164,6 +192,15 @@ Device端(Hose)发送(e.g. 外来信息): 从avail ring中取, 处理完成后�
 
 - virito笔记补完
     * https://www.cnblogs.com/LoyenWang/p/14589296.html
+
+
+## TODO: Q
+
+- GFP in kernel means
+- 为何virtio使用scatterlist
+    * virito数据传递使用scatterlist, 一个scatterlist描述多个buffer
+    * 因为直接传递PA, 绕过HPA -> GVA
+
 
 ## ref
 

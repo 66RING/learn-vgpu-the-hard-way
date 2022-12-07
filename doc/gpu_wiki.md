@@ -14,10 +14,36 @@ mathjax: true
 - fatbin
 - ptx
 
+## driver API
+
+可以获取更多设备信息, 管理上下文, 管理module, 做显式初始化等
+
+[cuda driver api](https://docs.nvidia.com/cuda/cuda-driver-api/index.html)
+
+
+## Context && Module
+
+context保存着使用的device信息(分配的mm, 加载的module, uvm map等), 但是context结果不公开
+
+
 ## stream
 
 TODO
 
+相当于GPU的流水线, 
+
+```c
+kernel<<<grid, block,Ns,stream>>>(param list);
+```
+
+- grid表示int型或者dim3类型（x,y,z)。用于定义一个grid中的block时如何组织的。int型则直接表示为1维组织结构
+- block表示int型或者dim3类型（x,y,z)。用于定义一个block的thread是如何组织的。int型则直接表示为1维组织结构
+- Ns 表示size_t类型，可缺省，默认为0.用于设置每个block除了静态分配的共享内存外，最多能动态分配的共享内存大小，单位为byte。0表示不需要动态分配
+- stream表示cudaStream_t类型，可缺省，默认为0.表示该核函数位于哪个流
+
+
+- ref
+    * https://developer.download.nvidia.cn/CUDA/training/StreamsAndConcurrencyWebinar.pdf
 
 ## PTX
 

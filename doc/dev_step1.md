@@ -1,3 +1,13 @@
+---
+title: step1
+author: 66RING
+date: 2022-11-18
+tags: 
+- gpu
+- qemu
+mathjax: true
+---
+
 # 第一阶段开发: 打印机
 
 不实现任何逻辑, 只熟悉框架, 流畅触发回调函数打印信息。
