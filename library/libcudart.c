@@ -44,7 +44,7 @@ cudaError_t cudaMalloc(void **devPtr, size_t size) {
 	args.dst_size = size;
 	send_to_device(&args);
 	*devPtr = (void*)args.dst;
-	printf("cuda malloc 0x%x\n", (int)args.dst);
+	printf("cuda malloc 0x%lx\n", args.dst);
 	return cudaSuccess;
 }
 
@@ -57,7 +57,7 @@ cudaError_t cudaFree(void* devPtr) {
 	// 获取线程id做为标识
 	args.owner_id = syscall(__NR_gettid);
 	args.dst = (uint64_t)devPtr;
-	printf("cuda free dst 0x%x\n", (int)args.dst);
+	printf("cuda free dst 0x%lx\n", args.dst);
 	send_to_device(&args);
 	return cudaSuccess;
 }

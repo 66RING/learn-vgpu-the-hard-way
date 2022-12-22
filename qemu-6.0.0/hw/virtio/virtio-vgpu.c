@@ -11,30 +11,28 @@
 #include "block/thread-pool.h"
 #include "trace.h"
 #include "standard-headers/linux/virtio_ids.h"
+#include "qemu/log.h"
 
 #include "cuda_runtime.h"
-
-#if 0
-#define dprintf(fmt, arg...) \
-    fprintf(stderr, "" fmt, ##arg)
-#else
-#define dprintf(fmt, arg...)
-#endif
 
 
 // 转发cudaError_t cudaMalloc(void **devPtr, size_t size);
 // 申请gpu设备内存
 static void vgpu_cuda_malloc(VgpuArgs* args) {
-	dprintf("vgpu_cuda_malloc\n");
+    qemu_log_mask(LOG_GUEST_ERROR, "> vgpu_cuda_malloc\n");
+
 	void *devPtr;
 	cudaMalloc(&devPtr, args->dst_size);
 	args->dst = (uint64_t)devPtr;
+    qemu_log_mask(LOG_GUEST_ERROR, "< vgpu_cuda_malloc: 0x%lx\n", args->dst);
+	// TODO:返回错误代码
 }
 
 static void vgpu_cuda_free(VgpuArgs* args) {
-	dprintf("vgpu_cuda_free\n");
+    qemu_log_mask(LOG_GUEST_ERROR, "> vgpu_cuda_free\n");
 	cudaFree((void*)args->dst);
-	// TODO:
+    qemu_log_mask(LOG_GUEST_ERROR, "< vgpu_cuda_free: 0x%lx\n", args->dst);
+	// TODO:返回错误代码
 }
 
 static void virtio_vgpu_handler(VirtIODevice *vdev, VirtQueue *vq)
