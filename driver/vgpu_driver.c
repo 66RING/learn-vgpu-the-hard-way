@@ -92,6 +92,9 @@ out:
 static int vgpu_open(struct inode *inode, struct file *filp) {
 	printk("vgpu_open\n");
 	printk("dummpy open, nothing to do now.\n");
+	// TODO: 注释, 理清楚内核驱动开发中的作用
+	try_module_get(THIS_MODULE);
+
 	// TODO:
 	return 0;
 }
@@ -99,7 +102,7 @@ static int vgpu_open(struct inode *inode, struct file *filp) {
 static int vgpu_release(struct inode *inode, struct file *filp) {
 	// FIXME: bug 解除占用
 	printk("vgpu_release\n");
-	// TODO:
+	module_put(THIS_MODULE);
 	return 0;
 }
 
@@ -121,6 +124,8 @@ static long vgpu_ioctl(struct file *filp, unsigned int _cmd, unsigned long _arg)
 	printk("%d\n", arg->cmd);
 	switch (arg->cmd) {
 	case VGPU_CUDA_MALLOC:
+		send_command(arg);
+	case VGPU_CUDA_FREE:
 		send_command(arg);
 		break;
 	default:

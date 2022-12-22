@@ -27,7 +27,7 @@ static void device_open() {
 	}
 }
 
-static void send_command(VgpuArgs *args) {
+static void send_to_device(VgpuArgs *args) {
 	if (fd < 0)
 		device_open();
 	ioctl(fd, args->cmd, args);
@@ -39,35 +39,56 @@ cudaError_t cudaMalloc(void **devPtr, size_t size) {
 	memset(&args, 0, sizeof(VgpuArgs));
 
 	args.cmd = VGPU_CUDA_MALLOC;
+	// 获取线程id做为标识
 	args.owner_id = syscall(__NR_gettid);
-	// TODO:
-	send_command(&args);
+	args.dst_size = size;
+	send_to_device(&args);
 	*devPtr = (void*)args.dst;
-	printf("0x%x\n", (int)args.dst);
-	return (cudaError_t)0;
+	printf("cuda malloc 0x%x\n", (int)args.dst);
+	return cudaSuccess;
 }
 
+// 释放GPU设备内存
+cudaError_t cudaFree(void* devPtr) {
+	VgpuArgs args;
+	memset(&args, 0, sizeof(VgpuArgs));
+
+	args.cmd = VGPU_CUDA_FREE;
+	// 获取线程id做为标识
+	args.owner_id = syscall(__NR_gettid);
+	args.dst = (uint64_t)devPtr;
+	printf("cuda free dst 0x%x\n", (int)args.dst);
+	send_to_device(&args);
+	return cudaSuccess;
+}
+
+// 记录gpu kernel配置参数, 调用cudaLaunchsh时将参数传入
 cudaError_t cudaConfigureCall (dim3 gridDim, dim3 blockDim, size_t sharedMem, cudaStream_t stream) {
 	// TODO:
 	panic("unimplement");
-	return (cudaError_t)0;
+	return cudaSuccess;
 }
 
+// 记录gpu kernel启动参数, 调用cudaLaunchsh时将参数传入
 cudaError_t cudaSetupArgument (const void *arg, size_t size, size_t offset) {
 	// TODO:
 	panic("unimplement");
-	return (cudaError_t)0;
+	return cudaSuccess;
 }
 
+// 执行cubin, 通过解析func可以获得到cubin的header
 cudaError_t cudaLaunch (const void *func) {
 	// TODO:
 	panic("unimplement");
-	return (cudaError_t)0;
+	return cudaSuccess;
 }
 
+// 解析fatCubin, 返回cubin指针
+// 	涉及gpu ptx动态加载内容
 void** __cudaRegisterFatBinary(void *fatCubin) {
 	// TODO:
 	panic("unimplement");
+	return (void**)0;
 }
 
 void __cudaRegisterFunction(
