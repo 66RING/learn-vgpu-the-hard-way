@@ -12,9 +12,29 @@
 #include "trace.h"
 #include "standard-headers/linux/virtio_ids.h"
 
+#include "cuda_runtime.h"
+
+#if 0
+#define dprintf(fmt, arg...) \
+    fprintf(stderr, "" fmt, ##arg)
+#else
+#define dprintf(fmt, arg...)
+#endif
+
+
+// 转发cudaError_t cudaMalloc(void **devPtr, size_t size);
+// 申请gpu设备内存
 static void vgpu_cuda_malloc(VgpuArgs* args) {
-	printf("vgpu_cuda_malloc\n");
-	args->dst = 0xdeadbeef;
+	dprintf("vgpu_cuda_malloc\n");
+	void *devPtr;
+	cudaMalloc(&devPtr, args->dst_size);
+	args->dst = (uint64_t)devPtr;
+}
+
+static void vgpu_cuda_free(VgpuArgs* args) {
+	dprintf("vgpu_cuda_free\n");
+	cudaFree((void*)args->dst);
+	// TODO:
 }
 
 static void virtio_vgpu_handler(VirtIODevice *vdev, VirtQueue *vq)
@@ -37,6 +57,8 @@ static void virtio_vgpu_handler(VirtIODevice *vdev, VirtQueue *vq)
 		switch (args->cmd){
 		case VGPU_CUDA_MALLOC:
 			vgpu_cuda_malloc(args);
+		case VGPU_CUDA_FREE:
+			vgpu_cuda_free(args);
 			break;
 		default:
 			panic("unknow command");
