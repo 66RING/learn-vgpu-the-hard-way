@@ -8,10 +8,23 @@
 #include <sys/syscall.h>
 
 // from cuda header
-#include <builtin_types.h>
+// TODO: add on #include <builtin_types.h>
 
 #include<inttypes.h>
 #include "../protocol/vgpu_common.h"
+
+/// TODO: tmp
+enum cudaMemcpyKind
+{
+    cudaMemcpyHostToHost          =   0,      /**< Host   -> Host */
+    cudaMemcpyHostToDevice        =   1,      /**< Host   -> Device */
+    cudaMemcpyDeviceToHost        =   2,      /**< Device -> Host */
+    cudaMemcpyDeviceToDevice      =   3,      /**< Device -> Device */
+    cudaMemcpyDefault             =   4       /**< Direction of the transfer is inferred from the pointer values. Requires unified virtual addressing */
+};
+typedef int cudaError_t;
+const int cudaSuccess = 0;
+
 
 #define error(fmt, arg...) printf("ERROR: "fmt, ##arg)
 #define panic(fmt, arg...) printf("panic at %s: "fmt, __FUNCTION__, ##arg); exit(-1)
@@ -27,7 +40,7 @@ static void device_open() {
 	}
 }
 
-static void send_to_device(VgpuArgs *args) {
+static void send_to_driver(VgpuArgs *args) {
 	if (fd < 0)
 		device_open();
 	ioctl(fd, args->cmd, args);
@@ -42,7 +55,7 @@ cudaError_t cudaMalloc(void **devPtr, size_t size) {
 	// 获取线程id做为标识
 	args.owner_id = syscall(__NR_gettid);
 	args.dst_size = size;
-	send_to_device(&args);
+	send_to_driver(&args);
 	*devPtr = (void*)args.dst;
 	printf("cuda malloc 0x%lx\n", args.dst);
 	return cudaSuccess;
@@ -58,16 +71,35 @@ cudaError_t cudaFree(void* devPtr) {
 	args.owner_id = syscall(__NR_gettid);
 	args.dst = (uint64_t)devPtr;
 	printf("cuda free dst 0x%lx\n", args.dst);
-	send_to_device(&args);
+	send_to_driver(&args);
 	return cudaSuccess;
 }
 
-// 记录gpu kernel配置参数, 调用cudaLaunchsh时将参数传入
-cudaError_t cudaConfigureCall (dim3 gridDim, dim3 blockDim, size_t sharedMem, cudaStream_t stream) {
-	// TODO:
-	panic("unimplement");
+// count: count in byte
+cudaError_t cudaMemcpy(void* dst, const void* src, size_t count, enum cudaMemcpyKind kind) {
+	VgpuArgs args;
+	memset(&args, 0, sizeof(VgpuArgs));
+
+	// 获取线程id做为标识
+	args.owner_id = syscall(__NR_gettid);
+
+	args.cmd = VGPU_CUDA_MEMCPY;
+	args.dst = (uint64_t)dst;
+	args.src = (uint64_t)src;
+	args.src_size = (uint64_t)count;
+	args.kind = kind;
+	send_to_driver(&args);
+	// TODO: error handling
 	return cudaSuccess;
 }
+
+
+// 记录gpu kernel配置参数, 调用cudaLaunchsh时将参数传入
+// cudaError_t cudaConfigureCall (dim3 gridDim, dim3 blockDim, size_t sharedMem, cudaStream_t stream) {
+// 	// TODO:
+// 	panic("unimplement");
+// 	return cudaSuccess;
+// }
 
 // 记录gpu kernel启动参数, 调用cudaLaunchsh时将参数传入
 cudaError_t cudaSetupArgument (const void *arg, size_t size, size_t offset) {
@@ -91,20 +123,20 @@ void** __cudaRegisterFatBinary(void *fatCubin) {
 	return (void**)0;
 }
 
-void __cudaRegisterFunction(
-    void   **fatCubinHandle,
-	const char    *hostFun,
-	char    *deviceFun,
-	const char    *deviceName,
-	int      thread_limit,
-	uint3   *tid,
-	uint3   *bid,
-	dim3    *bDim,
-	dim3    *gDim,
-	int     *wSize
-) {
-	panic("unimplement");
-}
+// void __cudaRegisterFunction(
+//     void   **fatCubinHandle,
+// 	const char    *hostFun,
+// 	char    *deviceFun,
+// 	const char    *deviceName,
+// 	int      thread_limit,
+// 	uint3   *tid,
+// 	uint3   *bid,
+// 	dim3    *bDim,
+// 	dim3    *gDim,
+// 	int     *wSize
+// ) {
+// 	panic("unimplement");
+// }
  
 
 cudaError_t cudaThreadSynchronize (void) {

@@ -89,6 +89,25 @@ out:
 	// TODO:
 }
 
+// TODO: 假设存在一次数据传输的上限
+#define MM_BLOCK_SIZE = 4096;
+
+// TODO: copy_from_user: size = size in byte
+static uint64_t user_to_gpa(uint64_t src, size_t size) {
+	void *gva = kmalloc(size, GFP_KERNEL);
+	int err;
+	if((err=copy_from_user(gva, (void*)src, size)) != 0) {
+		error("copy_from_user failed");
+		return 0;
+	}
+	return (uint64_t)virt_to_phys(gva);
+}
+
+// TODO: other case
+static void kfree_gpa(uint64_t gpa, size_t size) {
+  kfree(phys_to_virt((phys_addr_t)gpa));
+}
+
 static int vgpu_open(struct inode *inode, struct file *filp) {
 	printk("vgpu_open\n");
 	printk("dummpy open, nothing to do now.\n");
@@ -112,6 +131,45 @@ static int vgpu_mmap(struct file *filp, struct vm_area_struct *vma) {
 	return 0;
 }
 
+// 考虑用户态数据地址转换问题
+static void vgpu_cuda_memcpy(VgpuArgs *arg) {
+	printk("vgpu_cuda_memcpy\n");
+	// TODO: 考虑mmap情况下设备内存和主存的一致性问题
+	switch (arg->kind) {
+		case H2H: {
+			printk("todo vgpu_cuda_memcpy H2H\n");
+		} break;
+		case H2D: {
+			printk("vgpu_cuda_memcpy H2D\n");
+			// 从用户态拷贝数据到设备
+			//  1. 获取用户态数据到内核态
+			//  2. 包裹转发
+			// TODO: 考虑mmap时, 同步更新数据问题
+
+			arg->src = user_to_gpa(arg->src, arg->src_size);
+			if (arg->src == 0) {
+				return;
+			}
+			printk("hx: 0x%x, dx 0x%x, size: %d\n", arg->src, arg->dst, arg->src_size);
+			send_command(arg);
+			kfree_gpa((uint64_t *)arg->src, arg->src_size);
+		} break;
+		case D2H: {
+			//
+		} break;
+		case D2D: {
+			printk("todo vgpu_cuda_memcpy D2D\n");
+		} break;
+		case cpyDefault:
+			printk("not support direction, UVM only\n");
+			break;
+		default:
+			printk("undefine direction of memcpy\n");
+			break;
+	}
+
+}
+
 static long vgpu_ioctl(struct file *filp, unsigned int _cmd, unsigned long _arg) {
 	printk("vgpu_ioctl\n");
 	VgpuArgs *arg = kmalloc(sizeof(VgpuArgs), GFP_KERNEL);
@@ -125,8 +183,12 @@ static long vgpu_ioctl(struct file *filp, unsigned int _cmd, unsigned long _arg)
 	switch (arg->cmd) {
 	case VGPU_CUDA_MALLOC:
 		send_command(arg);
+		break;
 	case VGPU_CUDA_FREE:
 		send_command(arg);
+		break;
+	case VGPU_CUDA_MEMCPY:
+		vgpu_cuda_memcpy(arg);
 		break;
 	default:
 		break;

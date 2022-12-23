@@ -15,3 +15,5 @@ install:
 
 uninstall:
 
+.PHONY: build
+
