@@ -12,9 +12,32 @@
 #include "trace.h"
 #include "standard-headers/linux/virtio_ids.h"
 #include "qemu/log.h"
+#include "exec/address-spaces.h"
 
-#include "cuda_runtime.h"
+#include <cuda.h>
+#include <cuda_runtime.h>
+#include <builtin_types.h>
+#include <cuda_profiler_api.h>
 
+
+static void* gpa2hva(uint64_t gpa) {
+	MemoryRegionSection section;
+
+	// TODO: about size = 1
+	section = memory_region_find(get_system_memory(), (ram_addr_t)gpa, 1);
+	if (!section.mr) {
+		qemu_log_mask(LOG_GUEST_ERROR, "mr not found\n");
+		return NULL;
+	}
+
+	if (!memory_region_is_ram(section.mr)) {
+		qemu_log_mask(LOG_GUEST_ERROR, "gpa2hva not a ram\n");
+		memory_region_unref(section.mr);
+		return NULL;
+	}
+
+	return (memory_region_get_ram_ptr(section.mr) + section.offset_within_region);
+}
 
 // 转发cudaError_t cudaMalloc(void **devPtr, size_t size);
 // 申请gpu设备内存
@@ -33,6 +56,56 @@ static void vgpu_cuda_free(VgpuArgs* args) {
 	cudaFree((void*)args->dst);
     qemu_log_mask(LOG_GUEST_ERROR, "< vgpu_cuda_free: 0x%lx\n", args->dst);
 	// TODO:返回错误代码
+}
+
+// gpu内存拷贝
+//  cudaError_t cudaMemcpy(void* dst, const void* src, size_t count, enum cudaMemcpyKind kind)
+//  cudaMemcpyHostToHost
+//  cudaMemcpyHostToDevice
+//  cudaMemcpyDeviceToHost
+//  cudaMemcpyDeviceToDevice
+//  cudaMemcpyDefault, 仅在支持uvm的gpu中适用
+//
+// TODO: error handling
+static void vgpu_cuda_memcpy(VgpuArgs* args) {
+    qemu_log_mask(LOG_GUEST_ERROR, "> vgpu_cuda_memcpy\n");
+    qemu_log_mask(LOG_GUEST_ERROR, "vgpu_cuda_memcpy hva_src: 0x%lx, dst 0x%lx, size: %d\n", args->src, args->dst, args->src_size);
+
+	uint64_t* src_hva;
+	uint64_t* dst;
+	CUresult err = 0;
+
+	switch (args->kind) {
+		case H2H: {
+			panic("unimplament");
+		} break;
+		case H2D: {
+			if ((src_hva = gpa2hva(args->src)) == NULL) {
+				panic("gpa2hva failed");
+			}
+
+			qemu_log_mask(LOG_GUEST_ERROR, "data: ");
+			for (int i=0;i < args->src_size; i++) {
+				qemu_log_mask(LOG_GUEST_ERROR, "0x%lx ", *((uint8_t*)src_hva+i));
+			}
+			qemu_log_mask(LOG_GUEST_ERROR, "\n");
+			err = cuMemcpyHtoD(args->dst, src_hva, args->src_size);
+		} break;
+		case D2H: {
+		} break;
+		case D2D: {
+			panic("unimplament");
+		} break;
+
+		case cpyDefault:
+			panic("not support direction, UVM only");
+			break;
+		default:
+			panic("undefine direction of memcpy");
+			break;
+	}
+
+    qemu_log_mask(LOG_GUEST_ERROR, "< vgpu_cuda_memcpy: \n");
 }
 
 static void virtio_vgpu_handler(VirtIODevice *vdev, VirtQueue *vq)
@@ -55,8 +128,12 @@ static void virtio_vgpu_handler(VirtIODevice *vdev, VirtQueue *vq)
 		switch (args->cmd){
 		case VGPU_CUDA_MALLOC:
 			vgpu_cuda_malloc(args);
+			break;
 		case VGPU_CUDA_FREE:
 			vgpu_cuda_free(args);
+			break;
+		case VGPU_CUDA_MEMCPY:
+			vgpu_cuda_memcpy(args);
 			break;
 		default:
 			panic("unknow command");

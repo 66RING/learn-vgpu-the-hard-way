@@ -23,7 +23,10 @@ OBJECT_DECLARE_SIMPLE_TYPE(VirtIOVGPU, VIRTIO_VGPU)
 
 #define assertm(exp, msg) assert(((void)msg, exp))
 
-#define panic(msg) fprintf(stderr, msg);abort()
+// #define panic(msg) fprintf(stderr, msg);abort()
+#define panic(msg) fprintf(stderr, "func= %-30s ,line= %-4d ," msg, __func__, __LINE__);abort()
+
+
 
 typedef struct VirtIOVgpuConf VirtIOVgpuConf;
 
