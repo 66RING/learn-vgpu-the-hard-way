@@ -23,7 +23,11 @@ mathjax: true
 
 ## Context && Module
 
+TODO:
+
 context保存着使用的device信息(分配的mm, 加载的module, uvm map等), 但是context结果不公开
+
+[详解CUDA的Context、Stream、Warp、SM、SP、Kernel、Block、Grid](https://zhuanlan.zhihu.com/p/266633373)
 
 
 ## stream

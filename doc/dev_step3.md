@@ -189,6 +189,8 @@ TODO: review
 
 ### cudaMemcpy
 
+> ⭐
+
 `cudaError_t cudaMemcpy ( void* dst, const void* src, size_t count, cudaMemcpyKind kind )`在host和device之间拷贝数据, 传递方向由`kind`参数指定: 
 
 - `cudaMemcpyHostToHost`
@@ -200,8 +202,48 @@ TODO: review
 1. 判断传输方向
 2. 从src拷贝count字节到dst
 
+
 - API
-    * TODO:
+    * TODO: 补全API功能说明
+    * cuda driver API
+        + cuMemcpyHtoD, ... 系列
+    * kernel driver API
+        + `virt_to_phys()`
+            + 内核地址转物理地址
+        + `copy_from_user`
+    * qemu API
+        + `memory_region_find()`
+        + `get_system_memory()`
+        + `memory_region_is_ram()`
+        + `memory_region_get_ram_ptr()`
+        + `qemu_map_ram_ptr()`
+
+- driver
+    1. 用户态数据拷贝: `copy_from_user`
+    2. 用户空间地址转换, 转换成VMM识别的gpa(linux内核地址 != gpa): `virt_to_phys`
+    3. 发送命令
+    4. 释放临时buffer
+        - 注意此时src是经过`virt_to_phys`转换后的物理地址, 需要`phys_to_virt`后才能kfree
+- backend
+    1. 虚拟机内存地址转换
+        - `memory_region_find`找memory region section 
+        - `memory_region_get_ram_ptr`通过section的mr找对应的hva区间(ram region) 
+        - 计算section在ram region中的偏移
+    2. 调用cuda driver API完成cudaMemcpy
+    3. TODO: mmap带来的一致性问题
+
+
+- result
+    * linux内核地址 != 物理地址, 即不是需要的gpa, 还需要一次`virt_to_phys()`转换
+    * 注意传输的单位是byte
+
+
+####  难点
+
+- 考虑虚拟机内部内存地址转换问题
+- 考虑driver处理用户空间地址转换
+- 考虑mmap时设备内存和host内存混用的一致性问题
+    * TODO: 先不考虑mmap的情况
 
 - TODO: 考虑mmap
     * 注意mmap的和非mmap的情况, 内存一致性
