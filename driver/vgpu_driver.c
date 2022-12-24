@@ -24,7 +24,6 @@
          ##arg)
 
 
-
 // TODO: virtio协议
 struct virtio_vgpu {
 	// private
@@ -133,13 +132,18 @@ static int vgpu_mmap(struct file *filp, struct vm_area_struct *vma) {
 
 // 考虑用户态数据地址转换问题
 static void vgpu_cuda_memcpy(VgpuArgs *arg) {
+	int err;
+
 	printk("vgpu_cuda_memcpy\n");
 	// TODO: 考虑mmap情况下设备内存和主存的一致性问题
+	printk("hx: 0x%x, dx 0x%x, size: %d\n", arg->src, arg->dst, arg->src_size);
 	switch (arg->kind) {
 		case H2H: {
 			printk("todo vgpu_cuda_memcpy H2H\n");
 		} break;
 		case H2D: {
+			// src: host memory address
+			// dst: device memeory address
 			printk("vgpu_cuda_memcpy H2D\n");
 			// 从用户态拷贝数据到设备
 			//  1. 获取用户态数据到内核态
@@ -150,12 +154,24 @@ static void vgpu_cuda_memcpy(VgpuArgs *arg) {
 			if (arg->src == 0) {
 				return;
 			}
-			printk("hx: 0x%x, dx 0x%x, size: %d\n", arg->src, arg->dst, arg->src_size);
 			send_command(arg);
 			kfree_gpa((uint64_t *)arg->src, arg->src_size);
 		} break;
 		case D2H: {
-			//
+			printk("vgpu_cuda_memcpy D2H\n");
+			// src: device memory address
+			// dst: host memeory address
+			// 创建内核态缓存
+			void* buffer = kmalloc(arg->dst_size, GFP_KERNEL);
+			// 计算缓存物理地址
+			uint64_t dst_phys = virt_to_phys(buffer);  
+			// 传递物理地址给后端
+			uint64_t user_dst = arg->dst;
+			arg->dst = dst_phys;
+			send_command(arg);
+			// 数据拷贝回用户态
+			err = copy_to_user((void*)user_dst, buffer, arg->dst_size);
+			kfree(buffer);
 		} break;
 		case D2D: {
 			printk("todo vgpu_cuda_memcpy D2D\n");
