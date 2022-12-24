@@ -9,4 +9,4 @@ $(TARGET):
 clean:
 	rm -rf $(TARGET)
 
-.PHONY: all
+.PHONY: all $(TARGET)

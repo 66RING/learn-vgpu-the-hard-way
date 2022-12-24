@@ -120,7 +120,7 @@ __cudaUnregisterFatBinary   // cuda程序执行完成, 计算资源从gpu中撤�
 
 ### 设备初始化
 
-TODO: 理清楚gpu context逻辑
+TODO: 理清楚gpu context逻辑。但是gpgpu-sim环境下部分API没有提供, 故先忽略
 
 - `cuDeviceGet`
 - `cuCtxCreate`
@@ -218,9 +218,19 @@ TODO: review
         + `memory_region_get_ram_ptr()`
         + `qemu_map_ram_ptr()`
 
+#### 设备初始化
+
+- `cuInit(0)`: 初始化cuda driver API
+
+
+#### Host to Device
+
+- src: 主存内存地址, 需要user, kernel, gpa, hva的转换
+- dst: 设备内存地址, 直接传递, 不需要转换
+
 - driver
     1. 用户态数据拷贝: `copy_from_user`
-    2. 用户空间地址转换, 转换成VMM识别的gpa(linux内核地址 != gpa): `virt_to_phys`
+    2. 内核空间地址转换, 转换成VMM识别的gpa(linux内核地址 != gpa): `virt_to_phys`
     3. 发送命令
     4. 释放临时buffer
         - 注意此时src是经过`virt_to_phys`转换后的物理地址, 需要`phys_to_virt`后才能kfree
@@ -233,12 +243,28 @@ TODO: review
     3. TODO: mmap带来的一致性问题
 
 
-- result
-    * linux内核地址 != 物理地址, 即不是需要的gpa, 还需要一次`virt_to_phys()`转换
-    * 注意传输的单位是byte
+#### Device to Host
+
+- src: 设备内存地址, 直接传递, 不需要转换
+- dst: 主存内存地址, 需要user, kernel, gpa, hva的转换
+
+- driver
+    1. 开辟内核态缓存用于接收数据
+    2. 缓存转换gpa告知后端, 用于接收数据
+    3. 发送命令
+    4. 数据从内核态拷贝到用户态`copy_to_user()`, 注意gpa将转换到virt
+- backend
+    1. 获取目的地址hva
+    2. 数据拷贝到hva: `cuMemcpyDtoH`, 此时内核态buffer就被接收到了数据
 
 
 ####  难点
+
+- result
+    * linux内核地址 != 物理地址, 即不是需要的gpa, 还需要一次`virt_to_phys()`转换
+    * 注意传输的单位是byte
+    * ⭐ 需要device初始化
+
 
 - 考虑虚拟机内部内存地址转换问题
 - 考虑driver处理用户空间地址转换
@@ -337,6 +363,17 @@ char __cudaInitModule(
 ```
 
 暂时无用
+
+## Bug log
+
+- 使用driver API需要先初始化设备
+- 使用gpgpu-sim需要将config文件拷贝到当前目录
+    * 不能用root, 否则工作目录和环境都会改变
+- gpgpu-sim上有点函数没有实现, 所以需要先场外测试一下:
+    * cuMemcpyDtoH
+    * cuMemcpyHtoD
+    * cuCtxCreate
+    * 因此部分功能暂且搁置
 
 
 ## Ref

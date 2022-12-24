@@ -86,7 +86,9 @@ cudaError_t cudaMemcpy(void* dst, const void* src, size_t count, enum cudaMemcpy
 	args.cmd = VGPU_CUDA_MEMCPY;
 	args.dst = (uint64_t)dst;
 	args.src = (uint64_t)src;
+	// size一次只会用到一个, 直接设置整相同, 不需要额外判断
 	args.src_size = (uint64_t)count;
+	args.dst_size = (uint64_t)count;
 	args.kind = kind;
 	send_to_driver(&args);
 	// TODO: error handling
