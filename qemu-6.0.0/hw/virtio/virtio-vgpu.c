@@ -132,17 +132,17 @@ static void vgpu_cuda_free(VgpuArgs* args) {
 // TODO: error handling
 static void vgpu_cuda_memcpy(VgpuArgs* args) {
     debug_log("> vgpu_cuda_memcpy\n");
-    debug_log("vgpu_cuda_memcpy src: 0x%lx, dst 0x%lx, size: %d\n", args->src, args->dst, args->src_size);
+    debug_log("vgpu_cuda_memcpy src: 0x%lx, dst 0x%lx, size: %d, kind: %d\n", args->src, args->dst, args->src_size, args->kind);
 
 	uint64_t* src_hva;
 	uint64_t* dst_hva;
 	CUresult err = 0;
 
 	switch (args->kind) {
-		case H2H: {
+		case cudaMemcpyHostToHost: {
 			panic("unimplament");
 		} break;
-		case H2D: {
+		case cudaMemcpyHostToDevice: {
 			if ((src_hva = gpa2hva(args->src)) == NULL) {
 				panic("gpa2hva failed");
 			}
@@ -155,7 +155,7 @@ static void vgpu_cuda_memcpy(VgpuArgs* args) {
 			cudaErrorCheck(cudaMemcpy(args->dst, src_hva, args->src_size, H2D));
 			// cudaErrorCheck(err = cuMemcpyHtoD((CUdeviceptr)args->dst, src_hva, args->src_size));
 		} break;
-		case D2H: {
+		case cudaMemcpyDeviceToHost: {
 			debug_log("D2H: ");
 			if ((dst_hva = gpa2hva(args->dst)) == NULL) {
 				panic("gpa2hva failed");
@@ -169,19 +169,25 @@ static void vgpu_cuda_memcpy(VgpuArgs* args) {
 				inspect(dst_hva, args->dst_size, uint8_t);
 			);
 		} break;
-		case D2D: {
+		case cudaMemcpyDeviceToDevice: {
 			panic("unimplament");
 		} break;
 
-		case cpyDefault:
+		case cudaMemcpyDefault:
 			panic("not support direction, UVM only");
 			break;
 		default:
-			panic("undefine direction of memcpy");
+			debug_log("undefine kind %d\n", args->kind);
+			// panic("undefine direction of memcpy");
 			break;
 	}
 
     debug_log("< vgpu_cuda_memcpy: \n");
+}
+
+// void** __cudaRegisterFatBinary(void *fatCubin)
+static void vgpu_cuda_register_fat_binary(VgpuArgs* args) {
+
 }
 
 static void virtio_vgpu_handler(VirtIODevice *vdev, VirtQueue *vq)
@@ -210,6 +216,9 @@ static void virtio_vgpu_handler(VirtIODevice *vdev, VirtQueue *vq)
 			break;
 		case VGPU_CUDA_MEMCPY:
 			vgpu_cuda_memcpy(args);
+			break;
+		case VGPU_CUDA_REGISTER_FAT_BINARY:
+			vgpu_cuda_register_fat_binary(args);
 			break;
 		default:
 			panic("unknow command");
