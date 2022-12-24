@@ -29,6 +29,12 @@ const int cudaSuccess = 0;
 #define error(fmt, arg...) printf("ERROR: "fmt, ##arg)
 #define panic(fmt, arg...) printf("panic at %s: "fmt, __FUNCTION__, ##arg); exit(-1)
 
+#if 1
+	#define dprintf(fmt, arg...) printf("DEBUG: "fmt, ##arg)
+#else
+	#define dprintf(fmt, arg...)
+#endif
+
 const char dev_path[] = "/dev/vgpu";
 int fd = -1;
 
@@ -57,7 +63,7 @@ cudaError_t cudaMalloc(void **devPtr, size_t size) {
 	args.dst_size = size;
 	send_to_driver(&args);
 	*devPtr = (void*)args.dst;
-	printf("cuda malloc 0x%lx\n", args.dst);
+	dprintf("cuda malloc 0x%lx\n", args.dst);
 	return cudaSuccess;
 }
 
@@ -70,7 +76,7 @@ cudaError_t cudaFree(void* devPtr) {
 	// 获取线程id做为标识
 	args.owner_id = syscall(__NR_gettid);
 	args.dst = (uint64_t)devPtr;
-	printf("cuda free dst 0x%lx\n", args.dst);
+	dprintf("cuda free dst 0x%lx\n", args.dst);
 	send_to_driver(&args);
 	return cudaSuccess;
 }

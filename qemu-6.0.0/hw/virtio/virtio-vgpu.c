@@ -19,7 +19,46 @@
 #include <builtin_types.h>
 #include <cuda_profiler_api.h>
 
+/*
+ * Utils
+ */
+#if 1
+	#define debug_log(fmt, arg...) qemu_log_mask(LOG_GUEST_ERROR, fmt, ##arg);
+#else
+	#define debug_log(fmt, arg...)
+#endif
 
+#if 1
+	#define DEBUG_BLOCK(x) do { x }  while(0)
+#else
+	#define DEBUG_BLOCK(x) 
+#endif 
+
+#define error_log(fmt, arg...) qemu_log_mask(LOG_GUEST_ERROR, fmt, ##arg);
+
+#define inspect(src_ptr, len, type) \
+	do { \
+		int ___i; \
+		for (___i=0;___i<len;___i++) { \
+			qemu_log_mask(LOG_GUEST_ERROR, "0x%x ", ((type*)src_ptr)[___i]); \
+		} \
+		qemu_log_mask(LOG_GUEST_ERROR, "\n"); \
+	} while(0)
+
+
+#define cudaErrorCheck(err) __cudaErrorCheck(err, __LINE__)
+static inline void __cudaErrorCheck(cudaError_t err, const int line) {
+    char *str;
+    if (err != cudaSuccess) {
+        str = (char *) cudaGetErrorString(err);
+        error_log(LOG_GUEST_ERROR, "[CUDA error] %04d \"%s\" line %d\n", err, str, line);
+    }
+}
+
+
+/*
+ * global and type
+ */
 typedef struct cudaDevice {
 	CUdevice device;
 	CUcontext context;
@@ -30,20 +69,14 @@ typedef struct cudaDevice {
 cudaDevice devicePool;
 int deviceCount = -1;
 
-#define cudaErrorCheck(err) __cudaErrorCheck(err, __LINE__)
 
-static inline void __cudaErrorCheck(cudaError_t err, const int line) {
-    char *str;
-    if (err != cudaSuccess) {
-        str = (char *) cudaGetErrorString(err);
-        qemu_log_mask(LOG_GUEST_ERROR, "[CUDA error] %04d \"%s\" line %d\n", err, str, line);
-    }
-}
-
+/*
+ * Declaration
+ */
 static void cudaInit() {
 	cudaErrorCheck(cuInit(0));
 	cudaErrorCheck(cuDeviceGetCount(&deviceCount));
-	qemu_log_mask(LOG_GUEST_ERROR, "cuda device count: %d\n", deviceCount);
+	debug_log( "cuda device count: %d\n", deviceCount);
 
 	// TODO: 注意create是一个栈, 后进先出
 	cudaErrorCheck(cuDeviceGet(&devicePool.device, 0));
@@ -56,12 +89,12 @@ static void* gpa2hva(uint64_t gpa) {
 	// TODO: about size = 1
 	section = memory_region_find(get_system_memory(), (ram_addr_t)gpa, 1);
 	if (!section.mr) {
-		qemu_log_mask(LOG_GUEST_ERROR, "mr not found\n");
+		error_log("mr not found\n");
 		return NULL;
 	}
 
 	if (!memory_region_is_ram(section.mr)) {
-		qemu_log_mask(LOG_GUEST_ERROR, "gpa2hva not a ram\n");
+		error_log("gpa2hva not a ram\n");
 		memory_region_unref(section.mr);
 		return NULL;
 	}
@@ -72,19 +105,19 @@ static void* gpa2hva(uint64_t gpa) {
 // 转发cudaError_t cudaMalloc(void **devPtr, size_t size);
 // 申请gpu设备内存
 static void vgpu_cuda_malloc(VgpuArgs* args) {
-    qemu_log_mask(LOG_GUEST_ERROR, "> vgpu_cuda_malloc\n");
+    debug_log("> vgpu_cuda_malloc\n");
 
 	void *devPtr;
 	cudaErrorCheck(cudaMalloc(&devPtr, args->dst_size));
 	args->dst = (uint64_t)devPtr;
-    qemu_log_mask(LOG_GUEST_ERROR, "< vgpu_cuda_malloc: 0x%lx\n", args->dst);
+    debug_log("< vgpu_cuda_malloc: 0x%lx\n", args->dst);
 	// TODO:返回错误代码
 }
 
 static void vgpu_cuda_free(VgpuArgs* args) {
-    qemu_log_mask(LOG_GUEST_ERROR, "> vgpu_cuda_free\n");
+    debug_log("> vgpu_cuda_free\n");
 	cudaFree((void*)args->dst);
-    qemu_log_mask(LOG_GUEST_ERROR, "< vgpu_cuda_free: 0x%lx\n", args->dst);
+    debug_log("< vgpu_cuda_free: 0x%lx\n", args->dst);
 	// TODO:返回错误代码
 }
 
@@ -98,8 +131,8 @@ static void vgpu_cuda_free(VgpuArgs* args) {
 //
 // TODO: error handling
 static void vgpu_cuda_memcpy(VgpuArgs* args) {
-    qemu_log_mask(LOG_GUEST_ERROR, "> vgpu_cuda_memcpy\n");
-    qemu_log_mask(LOG_GUEST_ERROR, "vgpu_cuda_memcpy src: 0x%lx, dst 0x%lx, size: %d\n", args->src, args->dst, args->src_size);
+    debug_log("> vgpu_cuda_memcpy\n");
+    debug_log("vgpu_cuda_memcpy src: 0x%lx, dst 0x%lx, size: %d\n", args->src, args->dst, args->src_size);
 
 	uint64_t* src_hva;
 	uint64_t* dst_hva;
@@ -114,17 +147,16 @@ static void vgpu_cuda_memcpy(VgpuArgs* args) {
 				panic("gpa2hva failed");
 			}
 
-			qemu_log_mask(LOG_GUEST_ERROR, "H2D host data: ");
-			for (int i=0;i < args->src_size; i++) {
-				qemu_log_mask(LOG_GUEST_ERROR, "0x%x ", *((uint8_t*)src_hva+i));
-			}
-			qemu_log_mask(LOG_GUEST_ERROR, "\n");
+			DEBUG_BLOCK(
+				debug_log("H2D host data: ");
+				inspect(src_hva, args->src_size, uint8_t);
+			);
 			// TODO: 待真实gpu测试driver API
 			cudaErrorCheck(cudaMemcpy(args->dst, src_hva, args->src_size, H2D));
 			// cudaErrorCheck(err = cuMemcpyHtoD((CUdeviceptr)args->dst, src_hva, args->src_size));
 		} break;
 		case D2H: {
-			qemu_log_mask(LOG_GUEST_ERROR, "D2H: ");
+			debug_log("D2H: ");
 			if ((dst_hva = gpa2hva(args->dst)) == NULL) {
 				panic("gpa2hva failed");
 			}
@@ -132,16 +164,10 @@ static void vgpu_cuda_memcpy(VgpuArgs* args) {
 			cudaErrorCheck(cudaMemcpy(dst_hva, args->src, args->dst_size, D2H));
 			// cudaErrorCheck(err = cuMemcpyDtoH((CUdeviceptr)dst_hva, args->src, args->dst_size));
 
-			qemu_log_mask(LOG_GUEST_ERROR, "D2H device data: ");
-			for (int i=0;i < args->dst_size; i++) {
-				qemu_log_mask(LOG_GUEST_ERROR, "0x%x ", *((uint8_t*)dst_hva+i));
-			}
-			qemu_log_mask(LOG_GUEST_ERROR, "\n");
-
-			// // TODO: test, 每个int + 1, 然后返回
-			// for (int i=0;i < args->dst_size/sizeof(int); i++) {
-			// 	((int*)dst_hva)[i] += 1;
-			// }
+			DEBUG_BLOCK(
+				debug_log("D2H device data: ");
+				inspect(dst_hva, args->dst_size, uint8_t);
+			);
 		} break;
 		case D2D: {
 			panic("unimplament");
@@ -155,7 +181,7 @@ static void vgpu_cuda_memcpy(VgpuArgs* args) {
 			break;
 	}
 
-    qemu_log_mask(LOG_GUEST_ERROR, "< vgpu_cuda_memcpy: \n");
+    debug_log("< vgpu_cuda_memcpy: \n");
 }
 
 static void virtio_vgpu_handler(VirtIODevice *vdev, VirtQueue *vq)

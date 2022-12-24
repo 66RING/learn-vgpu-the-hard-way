@@ -17,8 +17,13 @@
 
 #include "vgpu_driver.h"
 
+#if 1
+	#define dprintk(fmt, arg...) printk(fmt, ##arg)
+#else
+	#define dprintk(fmt, arg...)
+#endif
+
 #define panic(msg) printk(msg);abort()
-// TODO: learn this macro
 #define error(fmt, arg...)                                                     \
   printk(KERN_ERR "### func= %-30s ,line= %-4d ," fmt, __func__, __LINE__,     \
          ##arg)
@@ -50,7 +55,7 @@ static struct virtio_device_id id_table[] = {
 
 
 static void send_command(VgpuArgs *args) {
-	printk("send_command");
+	dprintk("send_command");
 	struct scatterlist *sgs[2];
 	struct scatterlist sg_out, sg_in;
 
@@ -66,7 +71,6 @@ static void send_command(VgpuArgs *args) {
 	sgs[1] = &sg_in;
 
 	// TODO: 加锁, 多个程序同时访问驱动
-
 	if(virtqueue_add_sgs(vgpu->vq, sgs, 1, 1, args, GFP_ATOMIC)) {
 		error("virtqueue_add_sgs failed");
 	}
@@ -91,7 +95,7 @@ out:
 // TODO: 假设存在一次数据传输的上限
 #define MM_BLOCK_SIZE = 4096;
 
-// TODO: copy_from_user: size = size in byte
+// size: bytes of data
 static uint64_t user_to_gpa(uint64_t src, size_t size) {
 	void *gva = kmalloc(size, GFP_KERNEL);
 	int err;
@@ -102,14 +106,14 @@ static uint64_t user_to_gpa(uint64_t src, size_t size) {
 	return (uint64_t)virt_to_phys(gva);
 }
 
-// TODO: other case
+// TODO: more other case
 static void kfree_gpa(uint64_t gpa, size_t size) {
   kfree(phys_to_virt((phys_addr_t)gpa));
 }
 
 static int vgpu_open(struct inode *inode, struct file *filp) {
-	printk("vgpu_open\n");
-	printk("dummpy open, nothing to do now.\n");
+	dprintk("vgpu_open\n");
+	dprintk("dummpy open, nothing to do now.\n");
 	// TODO: 注释, 理清楚内核驱动开发中的作用
 	try_module_get(THIS_MODULE);
 
@@ -119,14 +123,14 @@ static int vgpu_open(struct inode *inode, struct file *filp) {
 
 static int vgpu_release(struct inode *inode, struct file *filp) {
 	// FIXME: bug 解除占用
-	printk("vgpu_release\n");
+	dprintk("vgpu_release\n");
 	module_put(THIS_MODULE);
 	return 0;
 }
 
 static int vgpu_mmap(struct file *filp, struct vm_area_struct *vma) {
-	printk("vgpu_mmap\n");
-	// TODO:
+	dprintk("vgpu_mmap\n");
+	// TODO: useless for now
 	return 0;
 }
 
@@ -134,17 +138,17 @@ static int vgpu_mmap(struct file *filp, struct vm_area_struct *vma) {
 static void vgpu_cuda_memcpy(VgpuArgs *arg) {
 	int err;
 
-	printk("vgpu_cuda_memcpy\n");
+	dprintk("vgpu_cuda_memcpy\n");
 	// TODO: 考虑mmap情况下设备内存和主存的一致性问题
-	printk("hx: 0x%x, dx 0x%x, size: %d\n", arg->src, arg->dst, arg->src_size);
+	dprintk("hx: 0x%x, dx 0x%x, size: %d\n", arg->src, arg->dst, arg->src_size);
 	switch (arg->kind) {
 		case H2H: {
-			printk("todo vgpu_cuda_memcpy H2H\n");
+			dprintk("todo vgpu_cuda_memcpy H2H\n");
 		} break;
 		case H2D: {
 			// src: host memory address
 			// dst: device memeory address
-			printk("vgpu_cuda_memcpy H2D\n");
+			dprintk("vgpu_cuda_memcpy H2D\n");
 			// 从用户态拷贝数据到设备
 			//  1. 获取用户态数据到内核态
 			//  2. 包裹转发
@@ -158,7 +162,7 @@ static void vgpu_cuda_memcpy(VgpuArgs *arg) {
 			kfree_gpa((uint64_t *)arg->src, arg->src_size);
 		} break;
 		case D2H: {
-			printk("vgpu_cuda_memcpy D2H\n");
+			dprintk("vgpu_cuda_memcpy D2H\n");
 			// src: device memory address
 			// dst: host memeory address
 			// 创建内核态缓存
@@ -174,28 +178,28 @@ static void vgpu_cuda_memcpy(VgpuArgs *arg) {
 			kfree(buffer);
 		} break;
 		case D2D: {
-			printk("todo vgpu_cuda_memcpy D2D\n");
+			dprintk("todo vgpu_cuda_memcpy D2D\n");
 		} break;
 		case cpyDefault:
-			printk("not support direction, UVM only\n");
+			dprintk("not support direction, UVM only\n");
 			break;
 		default:
-			printk("undefine direction of memcpy\n");
+			dprintk("undefine direction of memcpy\n");
 			break;
 	}
 
 }
 
 static long vgpu_ioctl(struct file *filp, unsigned int _cmd, unsigned long _arg) {
-	printk("vgpu_ioctl\n");
+	dprintk("vgpu_ioctl\n");
 	VgpuArgs *arg = kmalloc(sizeof(VgpuArgs), GFP_KERNEL);
 	int err;
 	if((err=copy_from_user(arg, (void*)_arg, sizeof(VgpuArgs))) != 0) {
-		printk("err copy_from_user");
+		dprintk("err copy_from_user");
 		return -1;
 	}
 
-	printk("%d\n", arg->cmd);
+	dprintk("%d\n", arg->cmd);
 	switch (arg->cmd) {
 	case VGPU_CUDA_MALLOC:
 		send_command(arg);
@@ -211,7 +215,7 @@ static long vgpu_ioctl(struct file *filp, unsigned int _cmd, unsigned long _arg)
 	}
 
 	if((err=copy_to_user((void*)_arg, arg, sizeof(VgpuArgs)))!=0) {
-		printk("err copy_to_user");
+		dprintk("err copy_to_user");
 		return -1;
 	}
 
@@ -237,7 +241,7 @@ static struct miscdevice vgpu_driver = {
 
 static void virtio_remove(struct virtio_device *vdev) {
 	// TODO:
-	printk("virtio_remove\n");
+	dprintk("virtio_remove\n");
 	// 释放驱动
 	misc_deregister(&vgpu_driver);
 	// 重置设备
@@ -246,7 +250,7 @@ static void virtio_remove(struct virtio_device *vdev) {
 
 
 static int virtio_probe(struct virtio_device *vdev) {
-	printk("virtio_probe\n");
+	dprintk("virtio_probe\n");
 	// 创建vgpu全局单例, 负责管理vring等资源
 	vdev->priv = vgpu = kzalloc(sizeof(struct virtio_vgpu), GFP_KERNEL);
 	vgpu->vdev = vdev;
@@ -277,7 +281,7 @@ static int virtio_vgpu_init(void)
     if (register_virtio_driver(&virtio_driver) < 0) {
 		return 1;
 	}
-	printk("virtio_vgpu_init done\n");
+	dprintk("virtio_vgpu_init done\n");
 	return 0;
 }
 
