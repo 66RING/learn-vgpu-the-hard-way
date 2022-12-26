@@ -78,7 +78,7 @@ static void cudaInit() {
 	cudaErrorCheck(cuDeviceGetCount(&deviceCount));
 	debug_log( "cuda device count: %d\n", deviceCount);
 
-	// TODO: 注意create是一个栈, 后进先出
+	// 注意context是栈维护的, 后进先出
 	cudaErrorCheck(cuDeviceGet(&devicePool.device, 0));
 	cudaErrorCheck(cuCtxCreate(&devicePool.context, 0, devicePool.device));
 }
@@ -107,18 +107,20 @@ static void* gpa2hva(uint64_t gpa) {
 static void vgpu_cuda_malloc(VgpuArgs* args) {
     debug_log("> vgpu_cuda_malloc\n");
 
+	CUresult err = cudaErrorUnknown;
 	void *devPtr;
-	cudaErrorCheck(cudaMalloc(&devPtr, args->dst_size));
+	cudaErrorCheck(err = cudaMalloc(&devPtr, args->dst_size));
 	args->dst = (uint64_t)devPtr;
+	args->ret = err;
     debug_log("< vgpu_cuda_malloc: 0x%lx\n", args->dst);
-	// TODO:返回错误代码
 }
 
 static void vgpu_cuda_free(VgpuArgs* args) {
     debug_log("> vgpu_cuda_free\n");
-	cudaFree((void*)args->dst);
+	CUresult err = cudaErrorUnknown;
+	err = cudaFree((void*)args->dst);
+	args->ret = err;
     debug_log("< vgpu_cuda_free: 0x%lx\n", args->dst);
-	// TODO:返回错误代码
 }
 
 // gpu内存拷贝
@@ -129,14 +131,14 @@ static void vgpu_cuda_free(VgpuArgs* args) {
 //  cudaMemcpyDeviceToDevice
 //  cudaMemcpyDefault, 仅在支持uvm的gpu中适用
 //
-// TODO: error handling
 static void vgpu_cuda_memcpy(VgpuArgs* args) {
     debug_log("> vgpu_cuda_memcpy\n");
-    debug_log("vgpu_cuda_memcpy src: 0x%lx, dst 0x%lx, size: %d, kind: %d\n", args->src, args->dst, args->src_size, args->kind);
+    debug_log("vgpu_cuda_memcpy src: 0x%lx, dst 0x%lx, size: %d, kind: %d\n",
+			args->src, args->dst, args->src_size, args->kind);
 
 	uint64_t* src_hva;
 	uint64_t* dst_hva;
-	CUresult err = 0;
+	CUresult err = cudaErrorUnknown;
 
 	switch (args->kind) {
 		case cudaMemcpyHostToHost: {
@@ -152,7 +154,7 @@ static void vgpu_cuda_memcpy(VgpuArgs* args) {
 				inspect(src_hva, args->src_size, uint8_t);
 			);
 			// TODO: 待真实gpu测试driver API
-			cudaErrorCheck(cudaMemcpy(args->dst, src_hva, args->src_size, H2D));
+			cudaErrorCheck(err = cudaMemcpy(args->dst, src_hva, args->src_size, H2D));
 			// cudaErrorCheck(err = cuMemcpyHtoD((CUdeviceptr)args->dst, src_hva, args->src_size));
 		} break;
 		case cudaMemcpyDeviceToHost: {
@@ -161,7 +163,7 @@ static void vgpu_cuda_memcpy(VgpuArgs* args) {
 				panic("gpa2hva failed");
 			}
 			// TODO: 待真实gpu测试driver API
-			cudaErrorCheck(cudaMemcpy(dst_hva, args->src, args->dst_size, D2H));
+			cudaErrorCheck(err = cudaMemcpy(dst_hva, args->src, args->dst_size, D2H));
 			// cudaErrorCheck(err = cuMemcpyDtoH((CUdeviceptr)dst_hva, args->src, args->dst_size));
 
 			DEBUG_BLOCK(
@@ -182,12 +184,15 @@ static void vgpu_cuda_memcpy(VgpuArgs* args) {
 			break;
 	}
 
+	args->ret = err;
     debug_log("< vgpu_cuda_memcpy: \n");
 }
 
 // void** __cudaRegisterFatBinary(void *fatCubin)
 static void vgpu_cuda_register_fat_binary(VgpuArgs* args) {
-
+    debug_log("> vgpu_cuda_register_fat_binary: \n");
+    debug_log("vgpu_cuda_register_fat_binary: do nothing\n");
+    debug_log("< vgpu_cuda_register_fat_binary: \n");
 }
 
 static void virtio_vgpu_handler(VirtIODevice *vdev, VirtQueue *vq)
@@ -227,7 +232,9 @@ static void virtio_vgpu_handler(VirtIODevice *vdev, VirtQueue *vq)
 
 		// 数据更新后写回iovector
 		size_t s = iov_from_buf(elem->in_sg, elem->in_num, 0, args, sizeof(VgpuArgs));
-		// TODO: error handling
+		if (unlikely(s != sizeof(VgpuArgs))) {
+			debug_log("iov_from_buf size error \n");
+		}
 
 		// 将处理完后的描述符索引更新到Used队列中
 		virtqueue_push(vq, elem, sizeof(VgpuArgs));
@@ -235,7 +242,6 @@ static void virtio_vgpu_handler(VirtIODevice *vdev, VirtQueue *vq)
 		virtio_notify(vdev, vq);
 	}
 
-out:
 	free(args);
 }
 

@@ -41,6 +41,9 @@ struct VgpuArgs {
   uint64_t dst;
   uint64_t dst_size;
 
+  // return code or pointer
+  uint64_t ret;
+
   uint64_t owner_id;
 
   enum MemcpyKind kind;
