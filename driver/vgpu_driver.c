@@ -136,8 +136,6 @@ static int vgpu_mmap(struct file *filp, struct vm_area_struct *vma) {
 
 // 考虑用户态数据地址转换问题
 static void vgpu_cuda_memcpy(VgpuArgs *arg) {
-	int err;
-
 	dprintk("vgpu_cuda_memcpy\n");
 	// TODO: 考虑mmap情况下设备内存和主存的一致性问题
 	dprintk("hx: 0x%x, dx 0x%x, size: %d\n", arg->src, arg->dst, arg->src_size);
@@ -174,7 +172,7 @@ static void vgpu_cuda_memcpy(VgpuArgs *arg) {
 			arg->dst = dst_phys;
 			send_command(arg);
 			// 数据拷贝回用户态
-			err = copy_to_user((void*)user_dst, buffer, arg->dst_size);
+			copy_to_user((void*)user_dst, buffer, arg->dst_size);
 			kfree(buffer);
 		} break;
 		case D2D: {
@@ -187,7 +185,25 @@ static void vgpu_cuda_memcpy(VgpuArgs *arg) {
 			dprintk("undefine direction of memcpy\n");
 			break;
 	}
+}
 
+// 仅通知后端初始化
+// void** __cudaRegisterFatBinary(void *fatCubin);
+static void vgpu_cuda_register_fat_binary(VgpuArgs *arg) {
+	// 将uva中fatCubin指示的内容转换成物理地址
+	send_command(arg);
+}
+
+// 加载kernel(function)
+static void vgpu_cuda_register_function(VgpuArgs *arg) {
+	// 从用户态获取数据, 并转换成物理地址
+	arg->src = user_to_gpa(arg->src, arg->src_size);
+	arg->dst = user_to_gpa(arg->dst, arg->dst_size);
+	
+	send_command(arg);
+	
+	kfree_gpa(arg->src, arg->src_size);
+	kfree_gpa(arg->dst, arg->dst_size);
 }
 
 static long vgpu_ioctl(struct file *filp, unsigned int _cmd, unsigned long _arg) {
@@ -207,6 +223,12 @@ static long vgpu_ioctl(struct file *filp, unsigned int _cmd, unsigned long _arg)
 	case VGPU_CUDA_FREE:
 		send_command(arg);
 		break;
+	case VGPU_CUDA_REGISTER_FAT_BINARY:
+		vgpu_cuda_register_fat_binary(arg);
+		break;
+	case VGPU_CUDA_REGISTER_FUNCTION:
+		vgpu_cuda_register_function(arg);
+		break;
 	case VGPU_CUDA_MEMCPY:
 		vgpu_cuda_memcpy(arg);
 		break;
@@ -220,7 +242,6 @@ static long vgpu_ioctl(struct file *filp, unsigned int _cmd, unsigned long _arg)
 	}
 
 	kfree(arg);
-	// TODO:
 	return 0;
 }
 

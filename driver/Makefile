@@ -1,13 +1,11 @@
-ifneq ($(KERNELRELEASE),)
-	obj-m := vgpu_driver.o
-else
-	# KERN_DIR:=/lib/modules/6.0.7-artix1-1/build
-	KERN_DIR:=/lib/modules/$(shell uname -r)/build
-	PWD := $(shell pwd)
+obj-m := vgpu_driver.o
+
+
+KERN_DIR:=/lib/modules/$(shell uname -r)/build
+PWD := $(shell pwd)
 
 build:
 	$(MAKE) -C $(KERN_DIR) M=$(PWD) modules
-endif
 
 install: build
 	@if [ -n "`lsmod | grep vgpu_driver`" ]; then \
@@ -15,6 +13,7 @@ install: build
 	fi
 	sudo dmesg -C
 	sudo insmod vgpu_driver.ko
+	sudo chmod 666 /dev/vgpu
 	sudo dmesg
 
 clean:
