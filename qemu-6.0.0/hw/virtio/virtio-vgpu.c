@@ -47,11 +47,11 @@
 
 
 #define cudaErrorCheck(err) __cudaErrorCheck(err, __LINE__)
-static inline void __cudaErrorCheck(cudaError_t err, const int line) {
+static inline void __cudaErrorCheck(CUresult err, const int line) {
     char *str;
     if (err != cudaSuccess) {
-        str = (char *) cudaGetErrorString(err);
-        error_log(LOG_GUEST_ERROR, "[CUDA error] %04d \"%s\" line %d\n", err, str, line);
+		cuGetErrorName(err, (const char **) &str);
+        error_log("[CUDA error] %04d \"%s\" line %d\n", err, str, line);
     }
 }
 
@@ -59,30 +59,114 @@ static inline void __cudaErrorCheck(cudaError_t err, const int line) {
 /*
  * global and type
  */
+#define MaxFunctionNum 100
+#define MaxDeviceNum 10
+#define MaxStreamNum 512
+
+// kernel -> function 一一对应
+typedef struct deviceKernel {
+	void* fatBin;
+	char funcName[100];
+	uint32_t funcId;
+} deviceKernel;
+
+// 记录所有所需kernel备用
+// TODO: 小心reload, 如果线程切换了就load null了
+struct {
+	deviceKernel kernelLoaded[MaxFunctionNum];
+	uint32_t size;
+} kernelList;
+
+static deviceKernel* kernelNew() {
+	if(kernelList.size >= MaxFunctionNum) {
+		debug_log("run out of kernel slot\n");
+		return NULL;
+	}
+
+	kernelList.kernelLoaded[kernelList.size].fatBin = malloc(4*1024*1024);
+	return &kernelList.kernelLoaded[kernelList.size++];
+}
+
+
+// table of function handle
+typedef struct functionHandle {
+	uint32_t key;
+	CUfunction cudaFunction;
+} functionHandle;
+
 typedef struct cudaDevice {
 	CUdevice device;
 	CUcontext context;
-
+	functionHandle funcTable[MaxFunctionNum];
+	uint32_t size;
 } cudaDevice;
 
-// TODO: 先一个
-cudaDevice devicePool;
+static CUfunction* cudaFuncNew(cudaDevice *dev, uint32_t key) {
+	if (dev->size >= MaxFunctionNum) {
+		debug_log("out of function slot");
+		return NULL;
+	}
+	functionHandle *handle = &dev->funcTable[dev->size];
+	dev->size++;
+	handle->key = key;
+	return &handle->cudaFunction;
+}
+
+static CUfunction* cudaFuncGet(cudaDevice *dev, uint32_t key) {
+	int i;
+	for (i=0;i<dev->size;i++) {
+		if (dev->funcTable[i].key == key)
+			break;
+	}
+
+	if(i == dev->size) {
+		debug_log("function not found with key: %d", key);
+		return NULL;
+	}
+	return &dev->funcTable[i].cudaFunction;
+}
+
+// thread id -> 找到对应的device, 因为它的上下文在哪里
+// TODO: 目前只考虑一个设备, 总是device 0
+typedef struct cudaRuntime {
+	cudaDevice pool[10];
+} cudaRuntime;
+
+cudaStream_t cudaStream[MaxStreamNum];
+cudaRuntime cudaPool;
 int deviceCount = -1;
 
 
 /*
- * Declaration
+ * cuda helper function
  */
 static void cudaInit() {
+	// 初始cuda driver api
 	cudaErrorCheck(cuInit(0));
+	// TODO: 目前只考虑一个设备的情况, 只对一个初始化
 	cudaErrorCheck(cuDeviceGetCount(&deviceCount));
 	debug_log( "cuda device count: %d\n", deviceCount);
 
-	// 注意context是栈维护的, 后进先出
-	cudaErrorCheck(cuDeviceGet(&devicePool.device, 0));
-	cudaErrorCheck(cuCtxCreate(&devicePool.context, 0, devicePool.device));
+	// 创建设备上下文
+	cudaErrorCheck(cuDeviceGet(&cudaPool.pool[0].device, 0));
+	cudaErrorCheck(cuCtxCreate(&cudaPool.pool[0].context, 0, cudaPool.pool[0].device));
+
+	// 创建default stream
+	cudaStreamCreate(&cudaStream[0]);
 }
 
+static void loadKernel(int devId, uint32_t key, deviceKernel* kernel) {
+	CUmodule module;
+	// 从fatbin中加载module到当前context, 返回module
+	cudaErrorCheck(cuModuleLoadData(&module, kernel->fatBin));
+	// 从module中加载函数, 返回一个funcHandle
+	CUfunction *func = cudaFuncNew(&cudaPool.pool[devId], key);
+    cudaErrorCheck(cuModuleGetFunction(func, module, kernel->funcName));
+}
+
+/*
+ * backend logic
+ */
 static void* gpa2hva(uint64_t gpa) {
 	MemoryRegionSection section;
 
@@ -107,9 +191,9 @@ static void* gpa2hva(uint64_t gpa) {
 static void vgpu_cuda_malloc(VgpuArgs* args) {
     debug_log("> vgpu_cuda_malloc\n");
 
-	CUresult err = cudaErrorUnknown;
+	CUresult err = CUDA_ERROR_UNKNOWN;
 	void *devPtr;
-	cudaErrorCheck(err = cudaMalloc(&devPtr, args->dst_size));
+	cudaErrorCheck(err = (CUresult)cudaMalloc(&devPtr, args->dst_size));
 	args->dst = (uint64_t)devPtr;
 	args->ret = err;
     debug_log("< vgpu_cuda_malloc: 0x%lx\n", args->dst);
@@ -117,8 +201,8 @@ static void vgpu_cuda_malloc(VgpuArgs* args) {
 
 static void vgpu_cuda_free(VgpuArgs* args) {
     debug_log("> vgpu_cuda_free\n");
-	CUresult err = cudaErrorUnknown;
-	err = cudaFree((void*)args->dst);
+	CUresult err = CUDA_ERROR_UNKNOWN;
+	err = (CUresult)cudaFree((void*)args->dst);
 	args->ret = err;
     debug_log("< vgpu_cuda_free: 0x%lx\n", args->dst);
 }
@@ -133,12 +217,12 @@ static void vgpu_cuda_free(VgpuArgs* args) {
 //
 static void vgpu_cuda_memcpy(VgpuArgs* args) {
     debug_log("> vgpu_cuda_memcpy\n");
-    debug_log("vgpu_cuda_memcpy src: 0x%lx, dst 0x%lx, size: %d, kind: %d\n",
+    debug_log("vgpu_cuda_memcpy src: 0x%lx, dst 0x%lx, size: %ld, kind: %d\n",
 			args->src, args->dst, args->src_size, args->kind);
 
 	uint64_t* src_hva;
 	uint64_t* dst_hva;
-	CUresult err = cudaErrorUnknown;
+	CUresult err = CUDA_ERROR_UNKNOWN;
 
 	switch (args->kind) {
 		case cudaMemcpyHostToHost: {
@@ -154,7 +238,7 @@ static void vgpu_cuda_memcpy(VgpuArgs* args) {
 				inspect(src_hva, args->src_size, uint8_t);
 			);
 			// TODO: 待真实gpu测试driver API
-			cudaErrorCheck(err = cudaMemcpy(args->dst, src_hva, args->src_size, H2D));
+			cudaErrorCheck(err = (CUresult)cudaMemcpy(args->dst, src_hva, args->src_size, H2D));
 			// cudaErrorCheck(err = cuMemcpyHtoD((CUdeviceptr)args->dst, src_hva, args->src_size));
 		} break;
 		case cudaMemcpyDeviceToHost: {
@@ -163,7 +247,7 @@ static void vgpu_cuda_memcpy(VgpuArgs* args) {
 				panic("gpa2hva failed");
 			}
 			// TODO: 待真实gpu测试driver API
-			cudaErrorCheck(err = cudaMemcpy(dst_hva, args->src, args->dst_size, D2H));
+			cudaErrorCheck(err = (CUresult)cudaMemcpy(dst_hva, args->src, args->dst_size, D2H));
 			// cudaErrorCheck(err = cuMemcpyDtoH((CUdeviceptr)dst_hva, args->src, args->dst_size));
 
 			DEBUG_BLOCK(
@@ -191,8 +275,32 @@ static void vgpu_cuda_memcpy(VgpuArgs* args) {
 // void** __cudaRegisterFatBinary(void *fatCubin)
 static void vgpu_cuda_register_fat_binary(VgpuArgs* args) {
     debug_log("> vgpu_cuda_register_fat_binary: \n");
-    debug_log("vgpu_cuda_register_fat_binary: do nothing\n");
+	cudaInit();
     debug_log("< vgpu_cuda_register_fat_binary: \n");
+}
+
+// kernel < -- > function 一一对应, 加载function就是加载kernel
+static void vgpu_cuda_register_function(VgpuArgs* args) {
+	void *fatBin;
+	char *funcName;
+	uint32_t funcId;
+
+	// TODO: 暂不考虑fatbin很大的情况
+    fatBin = gpa2hva(args->src);
+    funcName = gpa2hva(args->dst);
+    funcId = args->flag;
+
+	// 初始化kernel上下文
+	// 假设fatBin不大于4MB
+	deviceKernel *ptr = kernelNew();
+    memcpy(ptr->fatBin, fatBin, args->src_size);
+    memcpy(ptr->funcName, funcName, args->dst_size);
+    ptr->funcId = funcId;
+
+	// TODO: 目前仅考虑一个设备
+	loadKernel(0, funcId, ptr);
+
+
 }
 
 static void virtio_vgpu_handler(VirtIODevice *vdev, VirtQueue *vq)
@@ -202,7 +310,7 @@ static void virtio_vgpu_handler(VirtIODevice *vdev, VirtQueue *vq)
 
 	args = (VgpuArgs*)malloc(sizeof(VgpuArgs));
 	// virtio协议, 传入N个入M处的scatterlist, 可以从iovector中获取到
-	while(elem = virtqueue_pop(vq, sizeof(VirtQueueElement))) {
+	while((elem = virtqueue_pop(vq, sizeof(VirtQueueElement)))) {
 		// WARN: error handling
 		// 从iovector中读取数据
 		iov_to_buf(elem->out_sg, elem->out_num, 0, args, sizeof(VgpuArgs));
@@ -224,6 +332,9 @@ static void virtio_vgpu_handler(VirtIODevice *vdev, VirtQueue *vq)
 			break;
 		case VGPU_CUDA_REGISTER_FAT_BINARY:
 			vgpu_cuda_register_fat_binary(args);
+			break;
+		case VGPU_CUDA_REGISTER_FUNCTION:
+			vgpu_cuda_register_function(args);
 			break;
 		default:
 			panic("unknow command");
@@ -260,7 +371,15 @@ static void virtio_vgpu_realize(DeviceState *dev, Error **errp)
 
     virtio_init(vdev, TYPE_VIRTIO_VGPU, VIRTIO_ID_VGPU,
                 sizeof(struct VirtIOVgpuConf));
+
     vgpu->vq = virtio_add_queue(vdev, 128, virtio_vgpu_handler);
+
+	// TODO: review
+	// vgpu运行时相关初始化
+	kernelList.size = 0;
+	for (int i=0;i<10;i++) {
+		cudaPool.pool[i].size = 0;
+	}
 }
 
 static void virtio_vgpu_unrealize(DeviceState *dev)

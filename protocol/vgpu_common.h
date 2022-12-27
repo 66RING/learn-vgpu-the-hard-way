@@ -14,6 +14,7 @@ enum VGPU_COMMAND
   VGPU_CUDA_FREE,
   VGPU_CUDA_MEMCPY,
   VGPU_CUDA_REGISTER_FAT_BINARY,
+  VGPU_CUDA_REGISTER_FUNCTION,
   CMD_MAX,
 };
 
@@ -40,6 +41,7 @@ struct VgpuArgs {
   uint64_t src_size;
   uint64_t dst;
   uint64_t dst_size;
+  uint64_t flag;
 
   // return code or pointer
   uint64_t ret;
