@@ -11,6 +11,7 @@
     --extra-ldflags=-L/usr/local/cuda/lib64/stubs \
     --extra-cflags=-lcuda \
     --extra-cflags=-lcudart \
+    --extra-cflags=-I/usr/local/cuda/include \
 ```
 
 - 命令行启动qemu除了需要`-nographic`还要在内核启动参数中加`console=ttyS0`

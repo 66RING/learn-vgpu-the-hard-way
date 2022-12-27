@@ -173,11 +173,28 @@ void __cudaRegisterFunction(
 TODO: review
 
 1. 前端拿到handle指针后(本质是`fatBinaryHeader`)将header(和其他一些参数)交给后端
+    - 最终会需要fatBin: 数据载体, fucntionName: 从fatBin中加载函数, hostFun: 作为funcId标识
 2. 后端为所有设备加载fatbin
     - 使用`cuModuleLoadData`和`cuModuleLoadData`直接加载header就可以(Q??: 内部会自动根据header找到数据)
 3. `cudaStreamCreate()`
     - 默认使用stream 0
     - 创建stream数组, 后期`cudaStreamCreate`API使用
+
+TODO
+
+- 一个device可以有多个function
+- TODO: 总结需要的map
+- module management
+    * https://www.cs.cmu.edu/afs/cs/academic/class/15668-s11/www/cuda-doc/html/group__CUDA__MODULE_ga52be009b0d4045811b30c965e1cb2cf.html#ga52be009b0d4045811b30c965e1cb2cf
+
+context = module管理 + kernel管理 + ...
+
+- image加载到上下文, 以module形式返回, 函数从module中加载，最后暴露给用户function handle
+
+- thread id -> 找到对应device 
+- thread id -> context
+    * 执行前加载context
+    * TODO: 先把一次性实现
 
 
 ### cudaMalloc
@@ -363,6 +380,26 @@ char __cudaInitModule(
 ```
 
 暂时无用
+
+
+## CUDA driver API
+
+- `cuInit(0)`, 初始化cuda driver api, 在任何driver api前使用, 会因为driver不匹配失败
+- `cuDeviceGet(&device, 0)`获取第一个设备
+- `cuCtxCreate(&context, 0, device)`, 创建context
+
+
+```c
+CUresult loadKernelFunction()
+{
+    // 这里的module_file是nvcc将kernel code编译成的ptx文件，这里用的是offline static compilation。
+    // 也可以使用nvrtc实现online comilation。产生后的PTX代码，使用cuModuleLoadData加载module，使用cuLinkAddData进行link。
+    // 也可以通过cuModuleLoadFatBinary直接导入fatbin文件 
+    err = cuModuleLoad(&module, module_file);
+    err = cuModuleGetFunction(&function, module, kernel_name);
+    return err;
+}
+```
 
 
 ## Ref

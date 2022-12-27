@@ -25,9 +25,11 @@ mathjax: true
 
 TODO:
 
-context保存着使用的device信息(分配的mm, 加载的module, uvm map等), 但是context结果不公开
-
 [详解CUDA的Context、Stream、Warp、SM、SP、Kernel、Block、Grid](https://zhuanlan.zhihu.com/p/266633373)
+
+context保存着使用的device信息(分配的mm, **加载的module/kernel**, uvm map等)
+
+- cuda runtime api采用延迟初始化的策略, 当检测不到当前ctx时才创建
 
 
 ## stream
@@ -37,17 +39,41 @@ TODO
 相当于GPU的流水线, 
 
 ```c
-kernel<<<grid, block,Ns,stream>>>(param list);
+kernel<<<gridDim, blockDim,sharedMemorySize,stream>>>(param list);
 ```
 
-- grid表示int型或者dim3类型（x,y,z)。用于定义一个grid中的block时如何组织的。int型则直接表示为1维组织结构
-- block表示int型或者dim3类型（x,y,z)。用于定义一个block的thread是如何组织的。int型则直接表示为1维组织结构
-- Ns 表示size_t类型，可缺省，默认为0.用于设置每个block除了静态分配的共享内存外，最多能动态分配的共享内存大小，单位为byte。0表示不需要动态分配
+- gridDim表示grid的维度, int型或者dim3类型（x,y,z)。用于定义一个grid中的block时如何组织的。int型则直接表示为1维组织结构
+- blockDim表示block的维度, int型或者dim3类型（x,y,z)。用于定义一个block的thread是如何组织的。int型则直接表示为1维组织结构
+- sharedMemorySize 表示size_t类型，可缺省，默认为0.用于设置每个block除了静态分配的共享内存外，最多能动态分配的共享内存大小，单位为byte。0表示不需要动态分配
 - stream表示cudaStream_t类型，可缺省，默认为0.表示该核函数位于哪个流
+
+同一个stream内同步顺序执行, 不同stream间可以并行执行。默认都是在默认stream上执行，即一个kernel执行完才能执行另一个kernel
 
 
 - ref
     * https://developer.download.nvidia.cn/CUDA/training/StreamsAndConcurrencyWebinar.pdf
+
+### demo
+
+```
+// 创建
+cudaStream_t stream[2];
+cudaStreamCreate(&stream[0]);
+cudaStreamCreate(&stream[1]);
+
+// 使用
+kernel1<<<GRIDSIZE,BLOCKSIZE,0,stream[0]>>>(...); 
+kernel2<<<GRIDSIZE,BLOCKSIZE,0,stream[1]>>>(...);
+
+// 销毁
+cudaError_t cudaStreamDestory(cudaStream_t stream);
+```
+
+### SP, SM, Wrap
+
+- SP(streaming processor)基本处理单元, 执行具体的执行, 也称gpu核
+- SM(streaming multiprocessor)多个SP和其他资源组成一个SM, 也称gpu大核
+
 
 ## PTX
 
