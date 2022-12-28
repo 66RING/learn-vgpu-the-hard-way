@@ -2,7 +2,7 @@
 #include<cuda.h>
 
 typedef double FLOAT;
-__global__ void sum(FLOAT *x) {
+__global__ void sum(FLOAT *x, FLOAT *y, FLOAT *z) {
 	int tid = threadIdx.x;
 	x[tid] += 1;
 }
@@ -10,9 +10,8 @@ __global__ void sum(FLOAT *x) {
 int main() {
 	int N = 32;
 	int nbytes = N * sizeof(FLOAT);
-
+	int i = 0;
 	FLOAT *dx = NULL, *hx = NULL;
-	int i;
 	// 申请显存
 	cudaMalloc((void**)&dx, nbytes);
 	
@@ -33,14 +32,15 @@ int main() {
 	printf("hx original:\n");
 	for(int i=0;i<N;i++) {
 		hx[i] = i;
-		printf("%g\n", hx[i]);
+		printf("%lf ", hx[i]);
 	}
+	printf("\n");
 
 	// copy to GPU
 	cudaMemcpy(dx, hx, nbytes, cudaMemcpyHostToDevice);
 
 	// call GPU
-	sum<<<1, N>>>(dx);
+	sum<<<1, N>>>(dx, dx ,dx);
 
 	// let gpu finish
 	cudaThreadSynchronize();
@@ -50,8 +50,9 @@ int main() {
 
 	printf("hx after:\n");
 	for(int i=0;i<N;i++) {
-		printf("%g\n", hx[i]);
+		printf("%lf ", hx[i]);
 	}
+	printf("\n");
 	cudaFree(dx);
 	free(hx);
 	return 0;
