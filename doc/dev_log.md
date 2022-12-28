@@ -68,3 +68,30 @@ TODO: more note maybe
 
 
 
+## misc
+
+### 为什么重启后make失败了?
+
+gcc版本问题: 因为我在ubuntu20安装了低版本的gcc, 它原本是gcc-7
+
+修改系统gcc版本, 添加到可用项, 最后的100表示优先级(越大优先级越高)适用于自动模式
+
+```
+sudo update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-5 100
+sudo update-alternatives --install /usr/bin/g++ g++ /usr/bin/g++-5 100
+
+sudo update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-7 100
+sudo update-alternatives --install /usr/bin/g++ g++ /usr/bin/g++-7 100
+
+# 删除用
+sudo update-alternatives --remove /usr/bin/gcc gcc /usr/bin/gcc-5 100
+sudo update-alternatives --remove /usr/bin/g++ g++ /usr/bin/g++-5 100
+```
+
+之后手动修改版本
+
+```
+sudo update-alternatives --config gcc
+sudo update-alternatives --config g++
+```
+

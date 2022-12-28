@@ -294,7 +294,7 @@ context = module管理 + kernel管理 + ...
 
 ### cudaConfigureCall
 
-```
+```c
 cudaError_t cudaConfigureCall(
         dim3 gridDim,
         dim3 blockDim,
@@ -306,15 +306,65 @@ cudaError_t cudaConfigureCall(
 2. 待`cudaLaunch`时发送给后端
 
 
+### ⭐ cudaSetupArgument
+
+```c
+cudaError_t cudaSetupArgument (const void *arg, size_t size, size_t offset);
+
+// Pushes size bytes of the argument pointed to by arg at offset bytes from the start
+// of the parameter passing area, which starts at offset 0. The arguments are stored in
+// the top of the execution stack. cudaSetupArgument() must be preceded by a call to
+// cudaConfigureCall().
+```
+
+**注意是push,  有几个参数就会调用几次**, 将参数push到一个区域中, offset就是当前参数的byte偏移
+
+- arg: Argument to push for a kernel launch
+- size Size of argument
+- offset: Offset in argument stack to push new arg
+    * 因为有几个参数就会调用几次, 所以这个offset就当前参数的位置偏移, 单位是byte
+
+1. 前端保存内核启动参数
+2. 考虑变长参数情况
+
+创建一个parameter passing area(数组 + size), 然后看后面`cuLaunchKernel`是怎么使用它的。
+
+因为我们在`cuLaunchKernel`往内核态传的时候需要传递这个变长的数据, 而传递变长数据的方法往往是在头部添加一个header。我们这里需要**考虑两种变长的情况**
+
+- 参数数量的变长
+- 参数类型的变长
+
+所以我们为了方便就不能老实遵守它这套机制了, 因为我们的后端并不知道这些变长的信息, 我们通过如下结构传递
+
+```c
+// 我们传递cudaKernelPara这片连续空间到内核态
+//  因为我们要传递的数据大小就是sizeof(uint32_t) + cudaKernelPara.paraStackOffset
+struct {
+	// 指示参数数量
+	uint32_t paraNum;
+	// 保存参数数据: (参数类型长度(uint32_t), 参数数据)
+	uint8_t paraStack[cudaKernelParaStackMaxSize];
+	// (sub header, data) + ... 的总长度
+	uint32_t paraStackOffset;
+} cudaKernelPara;
+```
+
+然后我们在`cudaLaunch`中加个断言`(uint64_t)&cudaKernelPara.paraStack == sizeof(uint32_t) + (uint64_t)&cudaKernelPara`保证内存布局连续。这个全局信息在`cudaConfigureCall`中初始化
+
+
 ### cudaLaunch && cuLaunchKernel
 
 `cudaError_t cudaLaunch (const void *func)`内部调用`cuLaunchKernel`完成功能
 
 ```c
-CUresult cuLaunchKernel ( CUfunction f, unsigned int  gridDimX, unsigned int  gridDimY, unsigned int  gridDimZ, unsigned int  blockDimX, unsigned int  blockDimY, unsigned int  blockDimZ, unsigned int  sharedMemBytes, CUstream hStream, void** kernelParams, void** extra )
+CUresult cuLaunchKernel ( CUfunction f, 
+    unsigned int  gridDimX, unsigned int  gridDimY, unsigned int  gridDimZ, 
+    unsigned int  blockDimX, unsigned int  blockDimY, unsigned int  blockDimZ, 
+    unsigned int  sharedMemBytes, CUstream hStream, 
+    void** kernelParams, void** extra )
 ```
 
-- f: Kernel to launch 
+- f: Kernel to launch, fuction handle
 - gridDimX: Width of grid in blocks 
 - gridDimY: Height of grid in blocks 
 - gridDimZ: Depth of grid in blocks 
@@ -340,6 +390,47 @@ TODO: 前后端参数传输协议
 3. 根据functionId在device表中找到对应kernel
 4. TODO: stream, 什么是stream
 5. cuLaunchKernel(func, stream, config, param, extra)启动
+
+- 前端
+    * 从用户态打包到内核态连续空间, 这样才能以连续物理地址返回
+    * 而这段连续空间怎么打包的就需要特定的协议了, 即encode, decode, 因为
+        + 内核态并没有参数类型信息, 不知道参数的数量
+    * 协议: header, 
+- 后端
+    * 拿到前端数据后根据CUDA driver API文档组织参数形式然后传递给cuLaunchKernel
+
+- TODO: 整理
+    * function handle -> kernel
+
+
+#### 参数传递的方式
+
+可以看到通过`void** kernelParams`传递参数数组, 而参数的类型不同长度不同, 这些具体地的怎么传递的呢？
+
+方法一：有N个参数, kernelParams是一个长度为N的数组, 数组的每个元素都散指向参数存储位置的指针。对于参数指针的大小我们不需要特别指定, 因为类型的大小信息已经被编译到kernel中了
+
+方法二: 通过extra参数传递, 用于一些小众的场景。传递到extra的是一个name, value数组。name后就紧跟value, 如此往复, 遇到NULL或`CU_LAUNCH_PARAM_END`停止。例如
+
+```c
+size_t argBufferSize;
+      char argBuffer[256];
+  
+      // populate argBuffer and argBufferSize
+  
+      void *config[] = {
+          CU_LAUNCH_PARAM_BUFFER_POINTER, argBuffer,
+          CU_LAUNCH_PARAM_BUFFER_SIZE,    &argBufferSize,
+          CU_LAUNCH_PARAM_END
+      };
+      status = cuLaunchKernel(f, gx, gy, gz, bx, by, bz, sh, s, NULL, config);
+```
+
+- `CU_LAUNCH_PARAM_BUFFER_POINTER`和它后面的value指示一个包含所有参数的buffer
+- `CU_LAUNCH_PARAM_BUFFER_SIZE`和后面的value知识buffer的大小
+
+其实和第一种方式的一样的
+
+[官方文档](https://docs.nvidia.com/cuda/cuda-driver-api/group__CUDA__EXEC.html#group__CUDA__EXEC_1gb8f3dc3031b40da29d5f9a7139e52e15)
 
 
 ### cudaThreadSynchronize
