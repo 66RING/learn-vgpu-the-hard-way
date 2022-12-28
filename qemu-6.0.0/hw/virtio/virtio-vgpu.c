@@ -28,6 +28,8 @@
 	#define debug_log(fmt, arg...)
 #endif
 
+#define panic(fmt) debug_log(fmt)
+
 #if 1
 	#define DEBUG_BLOCK(x) do { x }  while(0)
 #else
@@ -152,7 +154,7 @@ static void cudaInit() {
 	cudaErrorCheck(cuCtxCreate(&cudaPool.pool[0].context, 0, cudaPool.pool[0].device));
 
 	// 创建default stream
-	cudaStreamCreate(&cudaStream[0]);
+	cudaErrorCheck(cudaStreamCreate(&cudaStream[0]));
 }
 
 static void loadKernel(int devId, uint32_t key, deviceKernel* kernel) {
@@ -165,7 +167,7 @@ static void loadKernel(int devId, uint32_t key, deviceKernel* kernel) {
 }
 
 /*
- * backend logic
+ * backend logic below
  */
 static void* gpa2hva(uint64_t gpa) {
 	MemoryRegionSection section;
@@ -238,8 +240,8 @@ static void vgpu_cuda_memcpy(VgpuArgs* args) {
 				inspect(src_hva, args->src_size, uint8_t);
 			);
 			// TODO: 待真实gpu测试driver API
-			cudaErrorCheck(err = (CUresult)cudaMemcpy(args->dst, src_hva, args->src_size, H2D));
-			// cudaErrorCheck(err = cuMemcpyHtoD((CUdeviceptr)args->dst, src_hva, args->src_size));
+			// cudaErrorCheck(err = (CUresult)cudaMemcpy(args->dst, src_hva, args->src_size, H2D));
+			cudaErrorCheck(err = cuMemcpyHtoD((CUdeviceptr)args->dst, src_hva, args->src_size));
 		} break;
 		case cudaMemcpyDeviceToHost: {
 			debug_log("D2H: ");
@@ -247,8 +249,8 @@ static void vgpu_cuda_memcpy(VgpuArgs* args) {
 				panic("gpa2hva failed");
 			}
 			// TODO: 待真实gpu测试driver API
-			cudaErrorCheck(err = (CUresult)cudaMemcpy(dst_hva, args->src, args->dst_size, D2H));
-			// cudaErrorCheck(err = cuMemcpyDtoH((CUdeviceptr)dst_hva, args->src, args->dst_size));
+			// cudaErrorCheck(err = (CUresult)cudaMemcpy(dst_hva, args->src, args->dst_size, D2H));
+			cudaErrorCheck(err = cuMemcpyDtoH((CUdeviceptr)dst_hva, args->src, args->dst_size));
 
 			DEBUG_BLOCK(
 				debug_log("D2H device data: ");
@@ -279,8 +281,9 @@ static void vgpu_cuda_register_fat_binary(VgpuArgs* args) {
     debug_log("< vgpu_cuda_register_fat_binary: \n");
 }
 
-// kernel < -- > function 一一对应, 加载function就是加载kernel
+// kernel <--> function 一一对应, 加载function就是加载kernel
 static void vgpu_cuda_register_function(VgpuArgs* args) {
+    debug_log("> vgpu_cuda_register_function: \n");
 	void *fatBin;
 	char *funcName;
 	uint32_t funcId;
@@ -299,9 +302,83 @@ static void vgpu_cuda_register_function(VgpuArgs* args) {
 
 	// TODO: 目前仅考虑一个设备
 	loadKernel(0, funcId, ptr);
-
-
+    debug_log("< vgpu_cuda_register_function: \n");
 }
+
+// cudaError_t cudaLaunch (const void *func)
+// 	args.src: kernel config
+// 	args.dst: param config
+// 	args.flag: func
+// 使用cuLaunchKernel这个driver API执行kernel
+static void vgpu_cuda_kernel_launch(VgpuArgs* args) {
+    debug_log("> vgpu_cuda_kernel_launch\n");
+	// 考虑driver API参数传递规则
+	uint64_t* kernelConfig = gpa2hva(args->src);
+	uint8_t* kernelParamStack = gpa2hva(args->dst);
+	uint32_t paramNum;
+	uint32_t func;
+	CUresult err = CUDA_ERROR_UNKNOWN;
+
+	// 目前只支持使用default stream的情况
+	assert(kernelConfig[7] == 0);
+
+	func = (uint32_t)args->flag;
+	paramNum = *(uint32_t*)kernelParamStack;
+	kernelParamStack += sizeof(uint32_t);
+
+	// Kernel parameters can be specified via kernelParams. If f has N parameters,
+	// then kernelParams needs to be an array of N pointers. Each of kernelParams[0]
+	// through kernelParams[N-1] must point to a region of memory from which the actual kernel parameter will be copied.
+	// 一个参数指针数组, 每个元素都是指向参数的指针, 即参数的地址
+	void** kernelParams = malloc(sizeof(void*) * paramNum);
+	// 当前参数索引
+	uint32_t paramIdx = 0;
+	while (paramIdx < paramNum) {
+		// 计算当前参数大小
+		uint32_t paraSize = *(uint32_t*)kernelParamStack;
+		kernelParamStack += sizeof(uint32_t);
+		// 赋值当前**参数指针**, 即参数的地址
+		kernelParams[paramIdx] = kernelParamStack;
+		kernelParamStack += paraSize;
+
+		paramIdx++;
+	}
+
+	// 目前只考虑一个设备的情况
+	cudaDevice* dev = &cudaPool.pool[0];
+	CUfunction* funcHandle = cudaFuncGet(dev, func);
+
+	DEBUG_BLOCK(
+		// 参数检测核对
+		debug_log("grid (%lu %lu %lu) block(%lu %lu %lu) sharedMem(%lu)\n",
+			   kernelConfig[0], kernelConfig[1], kernelConfig[2], kernelConfig[3], kernelConfig[4], kernelConfig[5], kernelConfig[6]);
+		debug_log("params: ");
+		for (int i=0;i<paramNum;i++) {
+			debug_log("%llx ", *(unsigned long long*)kernelParams[i]);
+		}
+		debug_log("\n");
+	);
+
+	cudaErrorCheck(err = cuLaunchKernel(*funcHandle,
+                           kernelConfig[0], kernelConfig[1], kernelConfig[2],
+                           kernelConfig[3], kernelConfig[4], kernelConfig[5],
+                           kernelConfig[6], cudaStream[kernelConfig[7]], kernelParams, NULL));
+
+	args->ret = err;
+    free(kernelParams);
+    debug_log("< vgpu_cuda_kernel_launch\n");
+}
+
+
+// 等待kernel执行完成
+static void vgpu_cuda_thread_synchronize(VgpuArgs* args) {
+    debug_log("> vgpu_cuda_thread_synchronize\n");
+	CUresult err = CUDA_ERROR_UNKNOWN;
+	cudaErrorCheck(err = (CUresult)cudaDeviceSynchronize());
+	args->ret = err;
+    debug_log("< vgpu_cuda_thread_synchronize\n");
+}
+
 
 static void virtio_vgpu_handler(VirtIODevice *vdev, VirtQueue *vq)
 {
@@ -335,6 +412,12 @@ static void virtio_vgpu_handler(VirtIODevice *vdev, VirtQueue *vq)
 			break;
 		case VGPU_CUDA_REGISTER_FUNCTION:
 			vgpu_cuda_register_function(args);
+			break;
+		case VGPU_CUDA_KERNEL_LAUNCH:
+			vgpu_cuda_kernel_launch(args);
+			break;
+		case VGPU_CUDA_THREAD_SYNCHRONIZE:
+			vgpu_cuda_thread_synchronize(args);
 			break;
 		default:
 			panic("unknow command");
