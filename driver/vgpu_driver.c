@@ -206,6 +206,21 @@ static void vgpu_cuda_register_function(VgpuArgs *arg) {
 	kfree_gpa(arg->dst, arg->dst_size);
 }
 
+// cudaError_t cudaLaunch (const void *func)
+// 	args.src: kernel config
+// 	args.dst: param config
+// 	args.flag: func
+static void vgpu_cuda_kernel_launch(VgpuArgs *arg) {
+	// 从用户态获取数据, 并转换成物理地址
+	arg->src = user_to_gpa(arg->src, arg->src_size);
+	arg->dst = user_to_gpa(arg->dst, arg->dst_size);
+	
+	send_command(arg);
+	
+	kfree_gpa(arg->src, arg->src_size);
+	kfree_gpa(arg->dst, arg->dst_size);
+}
+
 static long vgpu_ioctl(struct file *filp, unsigned int _cmd, unsigned long _arg) {
 	dprintk("vgpu_ioctl\n");
 	VgpuArgs *arg = kmalloc(sizeof(VgpuArgs), GFP_KERNEL);
@@ -231,6 +246,13 @@ static long vgpu_ioctl(struct file *filp, unsigned int _cmd, unsigned long _arg)
 		break;
 	case VGPU_CUDA_MEMCPY:
 		vgpu_cuda_memcpy(arg);
+		break;
+	case VGPU_CUDA_KERNEL_LAUNCH:
+		vgpu_cuda_kernel_launch(arg);
+		break;
+	case VGPU_CUDA_THREAD_SYNCHRONIZE:
+		// 简单通知后端调用同步命令
+		send_command(arg);
 		break;
 	default:
 		break;
