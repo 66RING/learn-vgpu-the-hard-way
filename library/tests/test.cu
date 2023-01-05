@@ -1,17 +1,15 @@
 #include<stdio.h>
 #include<cuda.h>
 
-typedef double FLOAT;
-__global__ void sum(FLOAT *x, FLOAT *y, FLOAT *z) {
+__global__ void sum(int *x, int *y, int *z) {
 	int tid = threadIdx.x;
 	x[tid] += 1;
 }
 
 int main() {
 	int N = 32;
-	int nbytes = N * sizeof(FLOAT);
-	int i = 0;
-	FLOAT *dx = NULL, *hx = NULL;
+	int nbytes = N * sizeof(int);
+	int *dx = NULL, *hx = NULL;
 	// 申请显存
 	cudaMalloc((void**)&dx, nbytes);
 	
@@ -22,7 +20,7 @@ int main() {
 	}
 
 	// 申请CPU内存
-	hx = (FLOAT*)malloc(nbytes);
+	hx = (int*)malloc(nbytes);
 	if (hx == NULL) {
 		printf("CPU alloc fail");
 		return -1;
@@ -32,7 +30,7 @@ int main() {
 	printf("hx original:\n");
 	for(int i=0;i<N;i++) {
 		hx[i] = i;
-		printf("%lf ", hx[i]);
+		printf("%d ", hx[i]);
 	}
 	printf("\n");
 
@@ -50,7 +48,7 @@ int main() {
 
 	printf("hx after:\n");
 	for(int i=0;i<N;i++) {
-		printf("%lf ", hx[i]);
+		printf("%d ", hx[i]);
 	}
 	printf("\n");
 	cudaFree(dx);
