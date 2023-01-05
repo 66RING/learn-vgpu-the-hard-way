@@ -74,6 +74,7 @@ typedef struct deviceKernel {
 
 // 记录所有所需kernel备用
 // TODO: 小心reload, 如果线程切换了就load null了
+// TODO: 重新设计名称
 struct {
 	deviceKernel kernelLoaded[MaxFunctionNum];
 	uint32_t size;
@@ -90,7 +91,10 @@ static deviceKernel* kernelNew() {
 }
 
 
-// table of function handle
+// TODO: 因为拿到虚拟机内部的handle比较麻烦(用户态连续地址)
+// 所以我们在外部加载function, 然后将内部的handle映射成外部的handle
+//
+// map table of inner function handle to outside handle
 typedef struct functionHandle {
 	uint32_t key;
 	CUfunction cudaFunction;
@@ -155,14 +159,18 @@ static void cudaInit() {
 
 	// 创建default stream
 	cudaErrorCheck(cudaStreamCreate(&cudaStream[0]));
+	debug_log( "cuda driver init done.\n");
 }
 
+// key: 虚拟机内部认为的function handle
 static void loadKernel(int devId, uint32_t key, deviceKernel* kernel) {
 	CUmodule module;
 	// 从fatbin中加载module到当前context, 返回module
 	cudaErrorCheck(cuModuleLoadData(&module, kernel->fatBin));
+
 	// 从module中加载函数, 返回一个funcHandle
 	CUfunction *func = cudaFuncNew(&cudaPool.pool[devId], key);
+	debug_log("load kernel func key: 0x%lx, get: 0x%lx\n", (uint64_t)key, (uint64_t)func)
     cudaErrorCheck(cuModuleGetFunction(func, module, kernel->funcName));
 }
 
@@ -299,8 +307,11 @@ static void vgpu_cuda_register_function(VgpuArgs* args) {
     memcpy(ptr->fatBin, fatBin, args->src_size);
     memcpy(ptr->funcName, funcName, args->dst_size);
     ptr->funcId = funcId;
+	debug_log("funcId: 0x%x, funcName %s", ptr->funcId, ptr->funcName);
+	debug_log("======== fatBin dump code (size = %ld): ===============\n", args->src_size);
+	// DEBUG_BLOCK(inspect(ptr->fatBin, args->src_size, uint8_t););
 
-	// TODO: 目前仅考虑一个设备
+	// TODO: 目前仅考虑一个设备, context都在device 0中
 	loadKernel(0, funcId, ptr);
     debug_log("< vgpu_cuda_register_function: \n");
 }
@@ -347,6 +358,7 @@ static void vgpu_cuda_kernel_launch(VgpuArgs* args) {
 	// 目前只考虑一个设备的情况
 	cudaDevice* dev = &cudaPool.pool[0];
 	CUfunction* funcHandle = cudaFuncGet(dev, func);
+	debug_log("launch kernel func key: 0x%lx, get: 0x%lx\n", (uint64_t)func, (uint64_t)funcHandle)
 
 	DEBUG_BLOCK(
 		// 参数检测核对
@@ -374,7 +386,7 @@ static void vgpu_cuda_kernel_launch(VgpuArgs* args) {
 static void vgpu_cuda_thread_synchronize(VgpuArgs* args) {
     debug_log("> vgpu_cuda_thread_synchronize\n");
 	CUresult err = CUDA_ERROR_UNKNOWN;
-	cudaErrorCheck(err = (CUresult)cudaDeviceSynchronize());
+	cudaErrorCheck(err = (CUresult)cudaThreadSynchronize());
 	args->ret = err;
     debug_log("< vgpu_cuda_thread_synchronize\n");
 }
