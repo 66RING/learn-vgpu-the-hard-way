@@ -100,7 +100,7 @@ static uint64_t user_to_gpa(uint64_t src, size_t size) {
 	void *gva = kmalloc(size, GFP_KERNEL);
 	int err;
 	if((err=copy_from_user(gva, (void*)src, size)) != 0) {
-		error("copy_from_user failed");
+		error("copy_from_user failed, %d bytes could not be copy", err);
 		return 0;
 	}
 	return (uint64_t)virt_to_phys(gva);

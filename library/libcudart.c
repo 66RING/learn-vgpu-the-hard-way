@@ -52,7 +52,7 @@ uint64_t cudaKernelConf[8];
 // 记录若干个参数内核启动参数
 #define cudaKernelParaStackMaxSize 512
 // 我们传递cudaKernelPara这片连续空间到内核态
-//  因为我们要传递的数据大小就是sizeof(uint32_t) + cudaKernelPara.paraStackSize
+//  因为我们要传递的数据大小就是sizeof(uint32_t) + cudaKernelPara.paraStackOffset
 struct {
 	// 指示参数数量
 	uint32_t paraNum;
@@ -111,13 +111,13 @@ cudaError_t cudaFree(void* devPtr) {
 
 // count: count in byte
 cudaError_t cudaMemcpy(void* dst, const void* src, size_t count, enum cudaMemcpyKind kind) {
+    dprintf("=== cudaMemcpy ===\n");
 	VgpuArgs args;
 	memset(&args, 0, sizeof(VgpuArgs));
 
+	args.cmd = VGPU_CUDA_MEMCPY;
 	// 获取线程id做为标识
 	args.owner_id = syscall(__NR_gettid);
-
-	args.cmd = VGPU_CUDA_MEMCPY;
 	args.dst = (uint64_t)dst;
 	args.src = (uint64_t)src;
 	// size一次只会用到一个, 直接设置整相同, 不需要额外判断
@@ -133,6 +133,7 @@ cudaError_t cudaMemcpy(void* dst, const void* src, size_t count, enum cudaMemcpy
 
 // 记录gpu kernel配置参数, 调用cudaLaunchsh时将参数传入
 cudaError_t cudaConfigureCall (dim3 gridDim, dim3 blockDim, size_t sharedMem, cudaStream_t stream) {
+    dprintf("=== cudaConfigureCall ===\n");
     dprintf("gridDim: %d %d %d\n", gridDim.x, gridDim.y, gridDim.z);
     dprintf("blockDim: %d %d %d\n", blockDim.x, blockDim.y, blockDim.z);
     dprintf("sharedMem: %lu\n", sharedMem);
@@ -150,6 +151,7 @@ cudaError_t cudaConfigureCall (dim3 gridDim, dim3 blockDim, size_t sharedMem, cu
 
     cudaKernelConf[7] = (stream == NULL) ? (uint64_t) 0 : (uint64_t) stream;
 
+	// 初始化cudaSetupArgument
 	// 参数数量清零
 	cudaKernelPara.paraNum = 0;
 	// 数据位置偏移清零
@@ -161,6 +163,7 @@ cudaError_t cudaConfigureCall (dim3 gridDim, dim3 blockDim, size_t sharedMem, cu
 //  将参数push到一个区域中(参数栈), offset就是当前参数的byte偏移量
 //  有几个参数就会调用几次
 cudaError_t cudaSetupArgument (const void *arg, size_t size, size_t offset) {
+    dprintf("=== cudaSetupArgument ===\n");
 	// 参数类型长度(uint32_t) + 参数数据大小
 	memcpy(&cudaKernelPara.paraStack[cudaKernelPara.paraStackOffset], &size, sizeof(uint32_t));
 	dprintf("param size: 0x%x\n", *(uint32_t*)&cudaKernelPara.paraStack[cudaKernelPara.paraStackOffset]);
@@ -175,15 +178,31 @@ cudaError_t cudaSetupArgument (const void *arg, size_t size, size_t offset) {
 	return cudaSuccess;
 }
 
-// 执行cubin, 通过解析func可以获得到cubin的header
+// 向后端发送config和param的配置
+// 	后端使用driver API执行
 cudaError_t cudaLaunch (const void *func) {
+    dprintf("=== cudaLaunch ===\n");
 	// 保证内存空间连续
-	assert((uint64_t)&cudaKernelPara.paraStack == sizeof(uint32_t) + (uint64_t)&cudaKernelPara);
+	assert((uint64_t)&cudaKernelPara.paraStack == sizeof(cudaKernelPara.paraNum) + (uint64_t)&cudaKernelPara);
 
+	dprintf("cudaLaunch func: %lx\n", (uint64_t)func);
+	VgpuArgs args;
+	memset(&args, 0, sizeof(VgpuArgs));
+	args.cmd = VGPU_CUDA_KERNEL_LAUNCH;
+	args.owner_id = syscall(__NR_gettid);
 
-	// TODO:
-	panic("unimplement");
-	return cudaSuccess;
+	// src: kernel config
+	args.src = (uint64_t)cudaKernelConf;
+	args.src_size = sizeof(cudaKernelConf);
+
+	// dst: kernel param
+	args.dst = (uint64_t)&cudaKernelPara;
+	// sizeof(uint32_t) + cudaKernelPara.paraStackOffset
+	args.dst_size = sizeof(cudaKernelPara.paraNum) + cudaKernelPara.paraStackOffset;
+	args.flag = (uint64_t)func;
+
+	send_to_driver(&args);
+	return args.ret;
 }
 
 // 解析fatCubin, 返回cubin指针
@@ -214,6 +233,8 @@ void** __cudaRegisterFatBinary(void *fatCubin) {
 	VgpuArgs args;
 	memset(&args, 0, sizeof(VgpuArgs));
 	args.cmd = VGPU_CUDA_REGISTER_FAT_BINARY;
+	args.owner_id = syscall(__NR_gettid);
+
 	// 仅用于通知后端初始化设备和上下文
 	send_to_driver(&args);
 	
@@ -235,6 +256,7 @@ void __cudaRegisterFunction(
 	int     *wSize
 ) {
 
+    dprintf("=== __cudaRegisterFunction ===\n");
     dprintf("fatCubinHandle: %p, value: %p\n", fatCubinHandle, *fatCubinHandle);
     dprintf("hostFun: %s (%p)\n", hostFun, hostFun);
     dprintf("deviceFun: %s (%p)\n", deviceFun, deviceFun);
@@ -244,16 +266,18 @@ void __cudaRegisterFunction(
 	VgpuArgs args;
 	memset(&args, 0, sizeof(VgpuArgs));
 
+	// TODO: review
 	computeFatBinaryFormat_t fatBinHeader;
 	fatBinHeader = (computeFatBinaryFormat_t) (*fatCubinHandle);
 
 	// 获取线程id做为标识
+	args.cmd = VGPU_CUDA_REGISTER_FUNCTION;
 	args.owner_id = syscall(__NR_gettid);
 
-	args.cmd = VGPU_CUDA_REGISTER_FUNCTION;
 	args.src = (uint64_t)(fatBinHeader);
-	args.src_size = (uint64_t)fatBinHeader->fatSize;
+	args.src_size = (uint64_t)fatBinHeader->fatSize + (uint64_t)fatBinHeader->headerSize;
 	args.dst = (uint64_t)deviceName;
+	// 包括上\0
 	args.dst_size = (uint64_t)strlen(deviceName) + 1;
 	args.flag = (uint32_t) (uint64_t) hostFun;
 
@@ -262,15 +286,24 @@ void __cudaRegisterFunction(
 }
  
 
+// 简单调用同步命令
 cudaError_t cudaThreadSynchronize (void) {
-	panic("unimplement");
-	return (cudaError_t)0;
+    dprintf("=== cudaThreadSynchronize ===\n");
+	VgpuArgs args;
+	memset(&args, 0, sizeof(VgpuArgs));
+
+	args.cmd = VGPU_CUDA_THREAD_SYNCHRONIZE;
+	// 获取线程id做为标识
+	args.owner_id = syscall(__NR_gettid);
+	send_to_driver(&args);
+
+	return (cudaError_t)args.ret;
 }
 
 void __cudaUnregisterFatBinary(
   void **fatCubinHandle
 ) {
-	panic("unimplement");
+	// panic("unimplement");
 }
 
 char __cudaInitModule(
