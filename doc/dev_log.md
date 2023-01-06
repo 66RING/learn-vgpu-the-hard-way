@@ -67,8 +67,12 @@ TODO: more note maybe
 
 
 
-
 ## misc
+
+### fatBin的区域
+
+fatBin的内存布局是`headerSize + fatSize`, 不单是`fatSize`
+
 
 ### 为什么重启后make失败了?
 
@@ -83,7 +87,7 @@ sudo update-alternatives --install /usr/bin/g++ g++ /usr/bin/g++-5 100
 sudo update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-7 100
 sudo update-alternatives --install /usr/bin/g++ g++ /usr/bin/g++-7 100
 
-# 删除用
+删除用
 sudo update-alternatives --remove /usr/bin/gcc gcc /usr/bin/gcc-5 100
 sudo update-alternatives --remove /usr/bin/g++ g++ /usr/bin/g++-5 100
 ```
@@ -93,5 +97,27 @@ sudo update-alternatives --remove /usr/bin/g++ g++ /usr/bin/g++-5 100
 ```
 sudo update-alternatives --config gcc
 sudo update-alternatives --config g++
+```
+
+### cuda前后端版本要一致
+
+比如nvcc 9.0编译出image长度为2216, 而nvcc 9.2编译出长度是2224
+
+cuda 9.0 -> cuda 9.2大变样: `configPop`, `configPush`, ...
+
+
+### cuda
+
+host下直接运行什么事都没有
+
+```
+DEBUG: === __cudaRegisterFunction ===
+DEBUG: fatCubinHandle: 0x561a0223a770, value: 0x561a01593028
+DEBUG: hostFun: UH��H�� H�}�H�u�H�U�H�U�H�M�H�E�H��H���?������UH��H��H�}�H�E�H��  (0x561a01391a6f)
+DEBUG: deviceFun: _Z3sumPiS_S_ (0x561a01391c00)
+DEBUG: deviceName: _Z3sumPiS_S_
+DEBUG: thread_limit: -1
+DEBUG: headerSize: 16
+DEBUG: fatSize: 2216
 ```
 
