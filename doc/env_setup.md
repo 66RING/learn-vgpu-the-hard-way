@@ -12,7 +12,7 @@ libsdl2-dev libaio-dev  libattr1-dev libbrlapi-dev libcap-ng-dev libgnutls28-dev
 libncurses5-dev libnfs-dev libnss3-dev \
 libpixman-1-0 libpng-dev librados-dev libsdl1.2-dev libseccomp-dev libcapstone3 \
 libspice-protocol-dev libspice-server-dev libssh2-1-dev liburcu-dev libusb-1.0-0-dev libvte-dev sparse uuid-dev \
-libspice-server1 libgtk3.0-cli libbrlapi0.6 libnettle6 libiscsi7 \
+libspice-server1 libbrlapi0.6 libnettle6 libiscsi7 \
 ```
 
 ## 虚拟机网络

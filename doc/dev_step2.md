@@ -197,6 +197,7 @@ Device端(Hose)发送(e.g. 外来信息): 从avail ring中取, 处理完成后�
 ## TODO: Q
 
 - GFP in kernel means
+    * `GFP_xxx`指定分配内存的区域, `GFP_DMA`表示分配适用于DMA的内存
 - 为何virtio使用scatterlist
     * virito数据传递使用scatterlist, 一个scatterlist描述多个buffer
     * 因为直接传递PA, 绕过HPA -> GVA

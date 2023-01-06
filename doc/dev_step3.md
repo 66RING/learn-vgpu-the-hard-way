@@ -152,10 +152,39 @@ TODO: 之后就可以使用cuModuleLoadData()等加载function了
     2. 设备表可以用来记录context, function, 使用`cuDeviceGet`和`cuCtxCreate`创建设备
         a. TODO, 了解cuda device抽象
 
+`void* fatCubin`指向的结构如下, 其中`const unsigned long long* data`指向fatbin的header, cuda driver api可以通过这段header区域加载image/module, 然后解析加载kernel
+
+```cpp
+// cuda9: /usr/local/cuda/include/fatBinaryCtl.h
+#define FATBINC_MAGIC   0x466243B1
+#define FATBINC_VERSION 1
+#define FATBINC_LINK_VERSION 2
+typedef struct {
+	int magic;
+	int version;
+	const unsigned long long* data;
+	void *filename_or_fatbins;  /* version 1: offline filename,
+                               * version 2: array of prelinked fatbins */
+} __fatBinC_Wrapper_t;
+```
+
+下面这个结构即是要用来加载的header, **整个image的长度为headerSize + fatSize**
+
+```cpp
+// cuda9: /usr/local/cuda/include/fatbinary.h
+struct __align__(8) fatBinaryHeader
+{
+	unsigned int 			magic;
+	unsigned short         	version;
+	unsigned short         	headerSize;
+	unsigned long long int 	fatSize;
+};
+```
+
 
 ### __cudaRegisterFunction
 
-```
+```cpp
 void __cudaRegisterFunction(
         void   **fatCubinHandle,
   const char    *hostFun,
@@ -171,6 +200,9 @@ void __cudaRegisterFunction(
 ```
 
 TODO: review
+
+官方版的`void** fatCubinHandle`就是指向的就是`__cudaRegisterFatBinary(void *fatCubin)`中的`*fatCubin`, 即`*fatCubinHandle == fatCubin`, 即`fatCubinHandle`数组中的元素是一个指针。
+
 
 1. 前端拿到handle指针后(本质是`fatBinaryHeader`)将header(和其他一些参数)交给后端
     - 最终会需要fatBin: 数据载体, fucntionName: 从fatBin中加载函数, hostFun: 作为funcId标识

@@ -96,7 +96,7 @@ TODO: 二进制分离小实验验证 + gdb `b __cudaRegisterFatBinary`
 
 `void** __cudaRegisterFatBinary(void *fatCubin);`接收一个`void*`参数, `fatCubin`指向`struct __fatBinC_Wrapper_t`结构, 里面含有cuda 二进制的信息和数据, 类似解析ELF。[__cudaRegisterFatBinary参数的讨论](https://stackoverflow.com/questions/6392407/what-are-the-parameters-for-cudaregisterfatbinary-and-cudaregisterfunction-f/39453201)
 
-```c
+```cpp
 // cuda9: /usr/local/cuda/include/fatBinaryCtl.h
 #define FATBINC_MAGIC   0x466243B1
 #define FATBINC_VERSION 1
@@ -112,7 +112,7 @@ typedef struct {
 
 `__fatBinC_Wrapper_t.data`指向具体的fatbin, 其内存布局是这样的`|struct fatBinaryHeader|data|`。即向通过`__fatBinC_Wrapper_t.data`解析出`fatBinaryHeader`, 然后用header指示的长度解析出后续数据。
 
-```
+```cpp
 // cuda9: /usr/local/cuda/include/fatbinary.h
 struct __align__(8) fatBinaryHeader
 {
@@ -122,6 +122,8 @@ struct __align__(8) fatBinaryHeader
 	unsigned long long int 	fatSize;
 };
 ```
+
+最后cuda driver api根据header指示的`headerSize + fatSize`这段内存空间加载image/module, 然后加载kernel
 
 TODO:
 
