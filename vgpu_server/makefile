@@ -1,7 +1,7 @@
-SRC = ae.c anet.c server.c zmalloc.c ae_test.c
-OBJ = ae.o anet.o server.o zmalloc.o ae_test.o
-PSRC = vgpu_server.cpp
-POBJ = vgpu_server.o
+# ae_test.c vgpu_server.c
+# ae_test.o vgpu_server.o
+SRC = ae.c anet.c adlist.c server.c zmalloc.c
+OBJ = ae.o anet.o adlist.o server.o zmalloc.o
 
 # test run
 test_r:
@@ -10,17 +10,17 @@ test_r:
 run:
 	./vgpu_server
 
-build: $(POBJ)
-	$(CC) -g -o vgpu_server $(OBJ)
+build: $(OBJ)
+	gcc -g -o vgpu_server $(OBJ) vgpu_server.c
 
-test: $(POBJ)
-	$(CC) -g -o ae_test $(OBJ)
+build_test: $(OBJ)
+	gcc -g -o ae_test $(OBJ) ae_test.c
+
+test: $(OBJ)
+	gcc -g -o ae_test $(OBJ)
 
 clean:
-	rm -rf $(OBJ) ae_test
-
-$(POBJ): $(OBJ)
-	g++ -g -c $(patsubst %.o, %.cpp, $@) -o $@
+	rm -rf $(OBJ) ae_test vgpu_server
 
 $(OBJ):
 	gcc -lpthread -g -c $(patsubst %.o, %.c, $@) -o $@
