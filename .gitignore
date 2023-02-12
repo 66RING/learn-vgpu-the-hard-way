@@ -15,3 +15,4 @@ driver/*.mod
 
 driver/compile_commands.json
 driver/vgpu.mod.c
+vgpu_server/vgpu_server
