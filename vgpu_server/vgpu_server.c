@@ -13,10 +13,10 @@
 #include "anet.h"
 #include "faas.h"
 
+#include "../protocol/vgpu_common.h"
+
 #define PORT 8888
 #define BUFFER_SIZE 4 * 1024 * 1024
-#define COMMAND_UNKNOWN -1
-#define CMD_TEST 1
 
 #if 0
 #define dprintf(fmt, arg...) printf("DEBUG: " fmt, ##arg)
@@ -53,7 +53,7 @@ void freeBytes(byte_t *b) {
 
 uint8_t *byteSlice(byte_t *b, int idx) { return b->buf + idx; }
 
-int byteLen(byte_t *b) { return b->bufLen; }
+void byteResize(byte_t *b, int l) { b->bufLen = l; }
 
 void byteInspect(byte_t *b) {
   for (int i = 0; i < b->bufLen; i++) {
@@ -61,7 +61,7 @@ void byteInspect(byte_t *b) {
   }
 }
 
-// TODO:流式read/write, 可能网络一次写/读补完
+// TODO:流式read/write, 可能网络一次写/读不完
 typedef struct {
   int fd;
   struct sockaddr_in cli;
@@ -73,8 +73,8 @@ typedef struct {
   int indexPtr;
   // 当前流式处理的命令类型
   int cmdType;
-  // 准备就绪的reply
-  uint8_t *reply;
+  // 准备就绪的reply, item: uint8_t* ptr
+  list *reply;
   // 准备就绪的args
   list *args;
   int argc;
@@ -102,25 +102,68 @@ server_t server;
 // cudaThreadSynchronize@@libcudart.so.9.0
 // __cudaUnregisterFatBinary@@libcudart.so.9.0
 
-// TODO:
+// 新建client对象
 client_t *createClient() {
   client_t *cli = (client_t *)malloc(sizeof(client_t));
   cli->requestBuf = (uint8_t *)malloc(sizeof(uint8_t) * BUFFER_SIZE);
-  cli->reply = (uint8_t *)malloc(sizeof(uint8_t) * BUFFER_SIZE);
+  cli->reply = listCreate();
   cli->fd = 0;
   cli->requestLen = 0;
   cli->indexPtr = 0;
-  cli->cmdType = -1;
+  cli->cmdType = COMMAND_UNKNOWN;
   cli->args = listCreate();
   cli->argc = 0;
-  // TODO: cli init things
   return cli;
 }
 
 void freeClient(client_t *cli) {
+  listRelease(cli->args);
+  listRelease(cli->reply);
   free(cli->requestBuf);
-  free(cli->reply);
   free(cli);
+}
+
+void freeArgs(list *args) {}
+
+void resetClient(client_t *cli) {
+  cli->indexPtr = 0;
+  cli->requestLen = 0;
+  cli->cmdType = COMMAND_UNKNOWN;
+  cli->argc = 0;
+  freeArgs(cli->args);
+}
+
+// 向客户端发送回复
+void sendReplyToClient(struct aeEventLoop *eventLoop, int fd, void *clientData,
+                       int mask) {
+  client_t *cli = (client_t *)clientData;
+  dprintf("sendReplyToClient, reply len: %d", listLength(cli->reply));
+
+  listIter *iter;
+  listNode *node;
+  list *list = cli->reply;
+  // 尽可能多的发送积攒的回复
+  iter = listGetIterator(list, AL_START_HEAD);
+  while ((node = listNext(iter)) != NULL) {
+    byte_t *rep = (byte_t *)node->value;
+    // TODO: 假设能够一次发完因为目前是单线程, 单客户端
+    int n = write(fd, rep->buf, rep->bufLen);
+    if (n != rep->bufLen) {
+      printf("FAIL: sendReplyToClient fail len");
+      close(fd);
+      exit(1);
+    }
+    listDelNode(list, node);
+  }
+  listReleaseIterator(iter); // 释放迭代器所占用的内存空间
+}
+
+// 向回复列表中插入新回复
+// 注册发送事件, 带写epoll就绪就发送数据
+void addReply(client_t *cli, byte_t *reply) {
+  listAddNodeTail(cli->reply, reply);
+  aeCreateFileEvent(server.loop, cli->fd, AE_WRITABLE, sendReplyToClient, cli,
+                    NULL);
 }
 
 void processCommand(client_t *cli) {
@@ -129,15 +172,44 @@ void processCommand(client_t *cli) {
   listNode *node;
   list *list = cli->args;
 
+  // TODO: demo
   int i = 0;
   iter = listGetIterator(list, AL_START_HEAD);
   while ((node = listNext(iter)) != NULL) {
-	  printf("arg%d: ", i);
+    printf("arg%d: ", i);
     byteInspect((byte_t *)node->value);
-	printf("\n");
-	i++;
+    printf("\n");
+    i++;
   }
   listReleaseIterator(iter); // 释放迭代器所占用的内存空间
+  
+  /// TODO:组织reply
+  byte_t *reply;
+  int msg = 0xdeadbeef;
+  reply = newBytes(sizeof(int));
+  switch (cli->cmdType) {
+  case VGPU_CUDA_MALLOC:
+	memcpy(reply->buf, &msg, sizeof(int));
+	break;
+  case VGPU_CUDA_FREE:
+	break;
+  case VGPU_CUDA_MEMCPY:
+	break;
+  case VGPU_CUDA_REGISTER_FAT_BINARY:
+	break;
+  case VGPU_CUDA_REGISTER_FUNCTION:
+	break;
+  case VGPU_CUDA_KERNEL_LAUNCH:
+	break;
+  case VGPU_CUDA_THREAD_SYNCHRONIZE:
+	break;
+  default:
+	printf("cmd unknow");
+  }
+
+  addReply(cli, reply);
+  // client状态重置
+  resetClient(cli);
 }
 
 // 命令完整返回true
@@ -163,10 +235,24 @@ int handleBuf(client_t *cli) {
   return 0;
 }
 
+// TODO: 返回命令参数的个数
 int countArgc(int cmdType) {
   switch (cmdType) {
-  case CMD_TEST:
-    return 2;
+  case VGPU_CUDA_MALLOC:
+	return 2;
+	break;
+  case VGPU_CUDA_FREE:
+	break;
+  case VGPU_CUDA_MEMCPY:
+	break;
+  case VGPU_CUDA_REGISTER_FAT_BINARY:
+	break;
+  case VGPU_CUDA_REGISTER_FUNCTION:
+	break;
+  case VGPU_CUDA_KERNEL_LAUNCH:
+	break;
+  case VGPU_CUDA_THREAD_SYNCHRONIZE:
+	break;
   default:
     printf("cmdType undefine");
     exit(1);
@@ -295,7 +381,7 @@ int main() {
                  sizeof(size_t) + sizeof(char) * strlen(arg2);
   msg = (uint8_t *)malloc(totalLen);
   ptr = msg;
-  *(int *)ptr = CMD_TEST;
+  *(int *)ptr = VGPU_CUDA_MALLOC;
   ptr += sizeof(int);
 
   *(int *)ptr = len1;
@@ -315,12 +401,12 @@ int main() {
     exit(1);
   }
 
-  // n = read(client_fd, buf, 256);
-  // dprintf("client read done\n");
-  // if (n != 10) {
-  // printf("FAIL: read len error: %d\n", n);
-  // exit(1);
-  // }
+  // TODO: 回复的协议需要重新设计
+  byte_t* b = newBytes(sizeof(int));
+  n = read(client_fd, b->buf, b->bufLen);
+  dprintf("client read done\n");
+
+  byteInspect(b);
 
   getchar();
   server.loop->stop = 1;
