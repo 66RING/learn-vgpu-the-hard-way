@@ -29,36 +29,64 @@ typedef struct {
   char data[];
 } RPCHdr;
 
+// TODO: 废弃
 typedef struct {
   int len;
   char data[];
 } ItemHdr;
 
+
+// 用户不直接使用, 用于二进制安全的网络数据传递
 typedef struct {
-  uint8_t *buf;
-  int bufLen;
-} byte_t;
+  int len;
+  uint8_t data[]; // 不占用空间
+} byteHdr;
 
-byte_t *newBytes(int len) {
-  byte_t *b = (byte_t *)malloc(sizeof(byte_t));
-  b->bufLen = len;
-  b->buf = (uint8_t *)malloc(sizeof(uint8_t) * len);
-  return b;
+// 
+typedef uint8_t* byte_t;
+
+byte_t newBytes(int len) {
+  byteHdr* hdr = (byteHdr*)malloc(sizeof(byteHdr) + sizeof(uint8_t) * len);
+  hdr->len = len;
+  return hdr->data;
 }
 
-void freeBytes(byte_t *b) {
-  free(b->buf);
-  free(b);
+void freeBytes(byte_t b) {
+  if (b == NULL) return;
+  byteHdr *hdr = (byteHdr*)(b - sizeof(byteHdr));
+  free(hdr);
 }
 
-uint8_t *byteSlice(byte_t *b, int idx) { return b->buf + idx; }
+// 修改数据的实际大小, 方便接收端处理
+void byteResize(byte_t b, int l) { 
+  byteHdr *hdr = (byteHdr*)(b - sizeof(byteHdr));
+  hdr->len = l; 
+}
 
-void byteResize(byte_t *b, int l) { b->bufLen = l; }
+// 返回buffer长度, 不一定是数据实际长度
+// 长度不包含元数据长度
+int byteLen(byte_t b) {
+  if (b == NULL) return -1;
+  byteHdr *hdr = (byteHdr*)(b - sizeof(byteHdr));
+  return hdr->len;
+}
 
-void byteInspect(byte_t *b) {
-  for (int i = 0; i < b->bufLen; i++) {
-    printf("0x%x ", b->buf[i]);
+void byteInspect(byte_t b) {
+  byteHdr *hdr = (byteHdr*)(b - sizeof(byteHdr));
+  for (int i = 0; i < hdr->len; i++) {
+    printf("0x%x ", hdr->data[i]);
   }
+}
+
+void* byteStream(byte_t b) {
+  if (b == NULL) return NULL;
+  return (void*)(b - sizeof(byteHdr));
+}
+
+// 将matedata和数据一并发送到fd
+int writeStream(int fd, byte_t b) {
+    byteHdr *hdr = (byteHdr*)byteStream(b);
+	return write(fd, hdr, sizeof(byteHdr) + hdr->len);
 }
 
 // TODO:流式read/write, 可能网络一次写/读不完
@@ -145,10 +173,10 @@ void sendReplyToClient(struct aeEventLoop *eventLoop, int fd, void *clientData,
   // 尽可能多的发送积攒的回复
   iter = listGetIterator(list, AL_START_HEAD);
   while ((node = listNext(iter)) != NULL) {
-    byte_t *rep = (byte_t *)node->value;
+    byteHdr *rep = (byteHdr*)byteStream((byte_t)node->value);
     // TODO: 假设能够一次发完因为目前是单线程, 单客户端
-    int n = write(fd, rep->buf, rep->bufLen);
-    if (n != rep->bufLen) {
+	int n = writeStream(fd, (byte_t)node->value);
+    if (n != byteLen((byte_t)node->value) + sizeof(byteHdr)) {
       printf("FAIL: sendReplyToClient fail len");
       close(fd);
       exit(1);
@@ -160,13 +188,13 @@ void sendReplyToClient(struct aeEventLoop *eventLoop, int fd, void *clientData,
 
 // 向回复列表中插入新回复
 // 注册发送事件, 带写epoll就绪就发送数据
-void addReply(client_t *cli, byte_t *reply) {
+void addReply(client_t *cli, byte_t reply) {
   listAddNodeTail(cli->reply, reply);
   aeCreateFileEvent(server.loop, cli->fd, AE_WRITABLE, sendReplyToClient, cli,
                     NULL);
 }
 
-void processCommand(client_t *cli) {
+void proccessCommand(client_t *cli) {
   // TODO: 实际处理。这里先打印参数信息
   listIter *iter;
   listNode *node;
@@ -177,19 +205,19 @@ void processCommand(client_t *cli) {
   iter = listGetIterator(list, AL_START_HEAD);
   while ((node = listNext(iter)) != NULL) {
     printf("arg%d: ", i);
-    byteInspect((byte_t *)node->value);
+    byteInspect((byte_t)node->value);
     printf("\n");
     i++;
   }
   listReleaseIterator(iter); // 释放迭代器所占用的内存空间
   
   /// TODO:组织reply
-  byte_t *reply;
+  byte_t replyBuf;
   int msg = 0xdeadbeef;
-  reply = newBytes(sizeof(int));
+  replyBuf = newBytes(sizeof(int));
   switch (cli->cmdType) {
   case VGPU_CUDA_MALLOC:
-	memcpy(reply->buf, &msg, sizeof(int));
+	memcpy(replyBuf, &msg, sizeof(int));
 	break;
   case VGPU_CUDA_FREE:
 	break;
@@ -207,7 +235,7 @@ void processCommand(client_t *cli) {
 	printf("cmd unknow");
   }
 
-  addReply(cli, reply);
+  addReply(cli, replyBuf);
   // client状态重置
   resetClient(cli);
 }
@@ -220,16 +248,16 @@ int handleBuf(client_t *cli) {
     // buf格式: (dataLen, data), (dataLen, data)...
 
     // TODO: 假设数据一次性读取完成
-    ItemHdr *ihdr;
-    ihdr = (ItemHdr *)&cli->requestBuf[cli->indexPtr];
+    byteHdr *bhdr;
+    bhdr = (byteHdr *)&cli->requestBuf[cli->indexPtr];
 
-    byte_t *data = newBytes(ihdr->len);
+    byte_t dataStore = newBytes(bhdr->len);
     cli->indexPtr += sizeof(int);
-    memcpy(byteSlice(data, 0), &cli->requestBuf[cli->indexPtr], ihdr->len);
+    memcpy(dataStore, &cli->requestBuf[cli->indexPtr], bhdr->len);
 
     // update buf
-    cli->indexPtr += ihdr->len;
-    listAddNodeTail(cli->args, data);
+    cli->indexPtr += bhdr->len;
+    listAddNodeTail(cli->args, dataStore);
     cli->argc--;
   }
   return 0;
@@ -277,7 +305,7 @@ void proccessBuf(client_t *cli) {
   int ok = handleBuf(cli);
   if (ok != -1) {
     // 命令完整可以处理
-    processCommand(cli);
+    proccessCommand(cli);
   }
 }
 
@@ -365,7 +393,7 @@ int main() {
 
   // test
 
-  // 传输协议: cmdType: int, (dataLen: int, data)...
+  // **传输协议: cmdType: int, (dataLen: int, data: uint8_t[])...**
   // 启动client
   char err[256];
   char buf[256];
@@ -377,8 +405,10 @@ int main() {
   uint8_t *ptr;
   int len1 = strlen(arg1);
   int len2 = strlen(arg2);
-  int totalLen = sizeof(int) + sizeof(size_t) + sizeof(char) * strlen(arg1) +
-                 sizeof(size_t) + sizeof(char) * strlen(arg2);
+  int totalLen = sizeof(int)
+			  + sizeof(size_t) + sizeof(char) * strlen(arg1)
+              + sizeof(size_t) + sizeof(char) * strlen(arg2);
+
   msg = (uint8_t *)malloc(totalLen);
   ptr = msg;
   *(int *)ptr = VGPU_CUDA_MALLOC;
@@ -401,9 +431,9 @@ int main() {
     exit(1);
   }
 
-  // TODO: 回复的协议需要重新设计
-  byte_t* b = newBytes(sizeof(int));
-  n = read(client_fd, b->buf, b->bufLen);
+  byteHdr* bhdr = byteStream(newBytes(sizeof(int)));
+  byte_t b = bhdr->data;
+  n = read(client_fd, bhdr, 10);
   dprintf("client read done\n");
 
   byteInspect(b);

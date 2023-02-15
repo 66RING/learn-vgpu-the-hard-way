@@ -21,6 +21,7 @@
 #define PORT 8888
 #define BUFFER_SIZE 4*1024*1024
 #define COMMAND_UNKNOWN -1
+#define CMD_TEST 1
 
 using namespace std;
 
@@ -131,6 +132,13 @@ VgpuServer::VgpuServer(int fd, int port): fd_(fd), port_(port) {
 }
 
 int countArgc(int cmdType) {
+  switch (cmdType) {
+  case CMD_TEST:
+	return 2;
+  default:
+	printf("cmdType undefine");
+	exit(1);
+  }
   // TODO:计算命令有几个参数
   return -1;
 }
@@ -194,8 +202,9 @@ void proccessBuf(Client* cli) {
 void requestFromClient(struct aeEventLoop *eventLoop, int fd, void *clientData, int mask) {
   Client* cli = (Client*)clientData;
   int n;
-  // 读取
-  n = read(fd, cli->buf_ + cli->requestLen, BUFFER_SIZE);
+
+  // 假设一次可以读取完毕
+  n = read(fd, cli->buf_, BUFFER_SIZE);
   if (n == BUFFER_SIZE) {
 	dprintf("FAIL: buffer overflow\n");
 	close(fd);
@@ -211,6 +220,7 @@ void requestFromClient(struct aeEventLoop *eventLoop, int fd, void *clientData, 
 	close(fd);
 	exit(1);
   }
+
   cli->requestLen += n;
   dprintf("request from client %d bytes\n", n);
   proccessBuf(cli);
@@ -244,8 +254,63 @@ void startServer() {
   server.SetFd(tcpServer(PORT));
   // 为服务器对象绑定事件循环
   aeCreateFileEvent(server.GetLoop(), server.GetFd(), AE_READABLE, acceptHandler, nullptr, nullptr);
-
+ 
   thread serverThread(_startServer, &server);
 }
 
-int main() { return 0; }
+int main() { 
+  startServer();
+
+  // test
+
+  // 传输协议: cmdType: int, (dataLen: int, data)...
+  // 启动client
+  char err[256];
+  char buf[256];
+  int client_fd = anetTcpConnect(err, "0.0.0.0", PORT);
+
+  char arg1[] = "arg1\0";
+  char arg2[] = "arg1\0";
+  uint8_t* msg;
+  uint8_t* ptr;
+  int len1 = strlen(arg1);
+  int len2 = strlen(arg2);
+  int totalLen = sizeof(int) + sizeof(size_t) + sizeof(char) * strlen(arg1) + sizeof(size_t) + sizeof(char) * strlen(arg2);
+  msg = (uint8_t*)malloc(totalLen);
+  ptr = msg;
+  *(int*)ptr = CMD_TEST;
+  ptr += sizeof(int);
+
+  *(int*)ptr = len1;
+  ptr += sizeof(int);
+  memcpy(ptr, &arg1, len1);
+  ptr += len1;
+
+  *(int*)ptr = len2;
+  ptr += sizeof(int);
+  memcpy(ptr, &arg1, len2);
+  ptr += len2;
+
+  int n = write(client_fd, msg, totalLen);
+  dprintf("client sent done\n");
+  if (n != totalLen) {
+	  printf("FAIL: write len error: %d\n", n);
+	  exit(1);
+  }
+
+  // n = read(client_fd, buf, 256);
+  // dprintf("client read done\n");
+  // if (n != 10) {
+	  // printf("FAIL: read len error: %d\n", n);
+	  // exit(1);
+  // }
+
+
+  getchar();
+  server.loop_->stop = 1;
+  dprintf("server stop\n");
+  // printf("PASS");
+
+
+  return 0; 
+}
