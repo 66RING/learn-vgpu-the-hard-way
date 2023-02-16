@@ -1,134 +1,59 @@
-#include <netdb.h>
-#include <netinet/in.h>
-#include <pthread.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <sys/socket.h>
-#include <sys/types.h>
-#include <unistd.h>
-
-#include "adlist.h"
-#include "ae.h"
-#include "anet.h"
 #include "faas.h"
 
-#include "../protocol/vgpu_common.h"
+// TODO: rebuild
+#include "gpu.c"
 
 #define PORT 8888
-#define BUFFER_SIZE 4 * 1024 * 1024
 
-#if 0
-#define dprintf(fmt, arg...) printf("DEBUG: " fmt, ##arg)
-#else
-#define dprintf(fmt, arg...)
-#endif
-
-typedef struct {
-  int cmdType;
-  char data[];
-} RPCHdr;
-
-// TODO: 废弃
-typedef struct {
-  int len;
-  char data[];
-} ItemHdr;
-
-
-// 用户不直接使用, 用于二进制安全的网络数据传递
-typedef struct {
-  int len;
-  uint8_t data[]; // 不占用空间
-} byteHdr;
-
-// 
-typedef uint8_t* byte_t;
+// 全局server对象
+server_t server;
 
 byte_t newBytes(int len) {
-  byteHdr* hdr = (byteHdr*)malloc(sizeof(byteHdr) + sizeof(uint8_t) * len);
+  byteHdr *hdr = (byteHdr *)malloc(sizeof(byteHdr) + sizeof(uint8_t) * len);
   hdr->len = len;
   return hdr->data;
 }
 
 void freeBytes(byte_t b) {
-  if (b == NULL) return;
-  byteHdr *hdr = (byteHdr*)(b - sizeof(byteHdr));
+  if (b == NULL)
+    return;
+  byteHdr *hdr = (byteHdr *)(b - sizeof(byteHdr));
   free(hdr);
 }
 
 // 修改数据的实际大小, 方便接收端处理
-void byteResize(byte_t b, int l) { 
-  byteHdr *hdr = (byteHdr*)(b - sizeof(byteHdr));
-  hdr->len = l; 
+void byteResize(byte_t b, int l) {
+  byteHdr *hdr = (byteHdr *)(b - sizeof(byteHdr));
+  hdr->len = l;
 }
 
 // 返回buffer长度, 不一定是数据实际长度
 // 长度不包含元数据长度
 int byteLen(byte_t b) {
-  if (b == NULL) return -1;
-  byteHdr *hdr = (byteHdr*)(b - sizeof(byteHdr));
+  if (b == NULL)
+    return -1;
+  byteHdr *hdr = (byteHdr *)(b - sizeof(byteHdr));
   return hdr->len;
 }
 
 void byteInspect(byte_t b) {
-  byteHdr *hdr = (byteHdr*)(b - sizeof(byteHdr));
+  byteHdr *hdr = (byteHdr *)(b - sizeof(byteHdr));
   for (int i = 0; i < hdr->len; i++) {
     printf("0x%x ", hdr->data[i]);
   }
 }
 
-void* byteStream(byte_t b) {
-  if (b == NULL) return NULL;
-  return (void*)(b - sizeof(byteHdr));
+void *byteStream(byte_t b) {
+  if (b == NULL)
+    return NULL;
+  return (void *)(b - sizeof(byteHdr));
 }
 
 // 将matedata和数据一并发送到fd
 int writeStream(int fd, byte_t b) {
-    byteHdr *hdr = (byteHdr*)byteStream(b);
-	return write(fd, hdr, sizeof(byteHdr) + hdr->len);
+  byteHdr *hdr = (byteHdr *)byteStream(b);
+  return write(fd, hdr, sizeof(byteHdr) + hdr->len);
 }
-
-// TODO:流式read/write, 可能网络一次写/读不完
-typedef struct {
-  int fd;
-  struct sockaddr_in cli;
-  // TODO: 固定大小读缓存, 假设一次性能够读完
-  uint8_t *requestBuf;
-  // buf末尾指针
-  int requestLen;
-  // 已经处理的长度
-  int indexPtr;
-  // 当前流式处理的命令类型
-  int cmdType;
-  // 准备就绪的reply, item: uint8_t* ptr
-  list *reply;
-  // 准备就绪的args
-  list *args;
-  int argc;
-} client_t;
-
-typedef struct {
-  // epoll fd
-  int fd;
-  list *clients;
-  int port;
-  aeEventLoop *loop;
-} server_t;
-
-server_t server;
-
-// cudaConfigureCall@@libcudart.so.9.0
-// cudaFree@@libcudart.so.9.0
-// __cudaInitModule@@libcudart.so.9.0
-// cudaLaunch@@libcudart.so.9.0
-// cudaMalloc@@libcudart.so.9.0
-// cudaMemcpy@@libcudart.so.9.0
-// __cudaRegisterFatBinary@@libcudart.so.9.0
-// __cudaRegisterFunction@@libcudart.so.9.0
-// cudaSetupArgument@@libcudart.so.9.0
-// cudaThreadSynchronize@@libcudart.so.9.0
-// __cudaUnregisterFatBinary@@libcudart.so.9.0
 
 // 新建client对象
 client_t *createClient() {
@@ -165,7 +90,7 @@ void resetClient(client_t *cli) {
 void sendReplyToClient(struct aeEventLoop *eventLoop, int fd, void *clientData,
                        int mask) {
   client_t *cli = (client_t *)clientData;
-  dprintf("sendReplyToClient, reply len: %d", listLength(cli->reply));
+  dprintf("sendReplyToClient, reply len: %d\n", listLength(cli->reply));
 
   listIter *iter;
   listNode *node;
@@ -173,17 +98,24 @@ void sendReplyToClient(struct aeEventLoop *eventLoop, int fd, void *clientData,
   // 尽可能多的发送积攒的回复
   iter = listGetIterator(list, AL_START_HEAD);
   while ((node = listNext(iter)) != NULL) {
-    byteHdr *rep = (byteHdr*)byteStream((byte_t)node->value);
+    byte_t b = (byte_t)node->value;
     // TODO: 假设能够一次发完因为目前是单线程, 单客户端
-	int n = writeStream(fd, (byte_t)node->value);
-    if (n != byteLen((byte_t)node->value) + sizeof(byteHdr)) {
+    int n = writeStream(fd, b);
+    if (n != byteLen(b) + sizeof(byteHdr)) {
       printf("FAIL: sendReplyToClient fail len");
       close(fd);
       exit(1);
     }
-    listDelNode(list, node);
+	// 回复完毕, 删除reply节点
+	listDelNode(cli->reply, node);
   }
-  listReleaseIterator(iter); // 释放迭代器所占用的内存空间
+
+  // 释放迭代器所占用的内存空间
+  listReleaseIterator(iter); 
+  aeDeleteFileEvent(server.loop, fd, AE_WRITABLE);
+  // client状态重置
+  // 现在重置是因为对于一个client肯定就是一个连接, 不会产生并发情况, 所以发送后再重置
+  resetClient(cli);
 }
 
 // 向回复列表中插入新回复
@@ -200,44 +132,40 @@ void proccessCommand(client_t *cli) {
   listNode *node;
   list *list = cli->args;
 
-  // TODO: demo
-  int i = 0;
-  iter = listGetIterator(list, AL_START_HEAD);
-  while ((node = listNext(iter)) != NULL) {
-    printf("arg%d: ", i);
-    byteInspect((byte_t)node->value);
-    printf("\n");
-    i++;
-  }
-  listReleaseIterator(iter); // 释放迭代器所占用的内存空间
-  
-  /// TODO:组织reply
-  byte_t replyBuf;
-  int msg = 0xdeadbeef;
-  replyBuf = newBytes(sizeof(int));
+  DEBUG_BLOCK(
+	int i = 0; iter = listGetIterator(list, AL_START_HEAD);
+	while ((node = listNext(iter)) != NULL) {
+	  printf("arg%d: ", i);
+      byteInspect((byte_t)node->value);
+      printf("\n");
+      i++;
+	}
+  );
+
+  byte_t reply;
   switch (cli->cmdType) {
   case VGPU_CUDA_MALLOC:
-	memcpy(replyBuf, &msg, sizeof(int));
-	break;
+	reply = handleCudaMalloc(cli);
+    break;
   case VGPU_CUDA_FREE:
-	break;
+    break;
   case VGPU_CUDA_MEMCPY:
-	break;
+	reply = handleCudaMemcpy(cli);
+    break;
   case VGPU_CUDA_REGISTER_FAT_BINARY:
-	break;
+    break;
   case VGPU_CUDA_REGISTER_FUNCTION:
-	break;
+    break;
   case VGPU_CUDA_KERNEL_LAUNCH:
-	break;
+    break;
   case VGPU_CUDA_THREAD_SYNCHRONIZE:
-	break;
+    break;
   default:
-	printf("cmd unknow");
+    printf("cmd unknow");
+	exit(1);
   }
 
-  addReply(cli, replyBuf);
-  // client状态重置
-  resetClient(cli);
+  addReply(cli, reply);
 }
 
 // 命令完整返回true
@@ -267,20 +195,21 @@ int handleBuf(client_t *cli) {
 int countArgc(int cmdType) {
   switch (cmdType) {
   case VGPU_CUDA_MALLOC:
-	return 2;
-	break;
+    return 2;
+    break;
   case VGPU_CUDA_FREE:
-	break;
+    break;
   case VGPU_CUDA_MEMCPY:
-	break;
+	return 4;
+    break;
   case VGPU_CUDA_REGISTER_FAT_BINARY:
-	break;
+    break;
   case VGPU_CUDA_REGISTER_FUNCTION:
-	break;
+    break;
   case VGPU_CUDA_KERNEL_LAUNCH:
-	break;
+    break;
   case VGPU_CUDA_THREAD_SYNCHRONIZE:
-	break;
+    break;
   default:
     printf("cmdType undefine");
     exit(1);
@@ -399,44 +328,123 @@ int main() {
   char buf[256];
   int client_fd = anetTcpConnect(err, "0.0.0.0", PORT);
 
-  char arg1[] = "hi\0";
-  char arg2[] = "world\0";
-  uint8_t *msg;
-  uint8_t *ptr;
-  int len1 = strlen(arg1);
-  int len2 = strlen(arg2);
-  int totalLen = sizeof(int)
-			  + sizeof(size_t) + sizeof(char) * strlen(arg1)
-              + sizeof(size_t) + sizeof(char) * strlen(arg2);
+  void* devPtr;
+  {
+	// args
+	size_t size = 10;
+	int len1 = sizeof(void*);
+	int len2 = sizeof(size_t);
 
-  msg = (uint8_t *)malloc(totalLen);
-  ptr = msg;
-  *(int *)ptr = VGPU_CUDA_MALLOC;
-  ptr += sizeof(int);
+	uint8_t *msg;
+	uint8_t *ptr;
+	int totalLen = sizeof(enum VGPU_COMMAND)
+		+ sizeof(int) + len1
+		+ sizeof(int) + len2;
 
-  *(int *)ptr = len1;
-  ptr += sizeof(int);
-  memcpy(ptr, &arg1, len1);
-  ptr += len1;
+	// TODO: rebuild
+	// name bullet / loading(装弹)
+	ptr = msg = (uint8_t *)malloc(totalLen);
+	*(int *)ptr = VGPU_CUDA_MALLOC;
+	ptr += sizeof(int);
 
-  *(int *)ptr = len2;
-  ptr += sizeof(int);
-  memcpy(ptr, &arg2, len2);
-  ptr += len2;
+	*(int *)ptr = len1;
+	ptr += sizeof(int);
+	memcpy(ptr, &devPtr, len1);
+	ptr += len1;
 
-  int n = write(client_fd, msg, totalLen);
-  dprintf("client sent done\n");
-  if (n != totalLen) {
-    printf("FAIL: write len error: %d\n", n);
-    exit(1);
+	*(int *)ptr = len2;
+	ptr += sizeof(int);
+	memcpy(ptr, &size, len2);
+	ptr += len2;
+
+	int n = write(client_fd, msg, totalLen);
+	dprintf("client sent done\n");
+	if (n != totalLen) {
+	  printf("FAIL: write len error: %d\n", n);
+	  exit(1);
+	}
+
+	byteHdr *bhdr = byteStream(newBytes(256));
+	byte_t b = bhdr->data;
+	n = read(client_fd, bhdr, 256);
+	byteResize(b, bhdr->len);
+	dprintf("sizeof void* %lu\n", sizeof(void*));
+	dprintf("client read done, len: %d, expect len: %lu\n", bhdr->len, sizeof(void*) + sizeof(cudaError_t));
+
+	// byteInspect(b);
+	ptr = b;
+	printf("err code: %d\n", *(cudaError_t*)ptr);
+	ptr += sizeof(cudaError_t);
+	printf("malloc: %p\n", *(void**)ptr);
+	devPtr = *(void**)ptr;
+	ptr += sizeof(void*);
   }
 
-  byteHdr* bhdr = byteStream(newBytes(sizeof(int)));
-  byte_t b = bhdr->data;
-  n = read(client_fd, bhdr, 10);
-  dprintf("client read done\n");
+  {
+	void* dst;
+	dst = devPtr;
+	int len1 = sizeof(void*);
 
-  byteInspect(b);
+	int src = 0xdeadbeef;
+	int len2 = sizeof(int);
+
+	size_t count = sizeof(int);
+	int len3 = sizeof(size_t);
+
+	cudaMemcpyKind kind = 1;
+	int len4 = sizeof(cudaMemcpyKind);
+
+	uint8_t *msg;
+	uint8_t *ptr;
+	int totalLen = sizeof(enum VGPU_COMMAND)
+	  + sizeof(int) + len1
+	  + sizeof(int) + len2
+	  + sizeof(int) + len3
+	  + sizeof(int) + len4;
+
+	ptr = msg = (uint8_t*)malloc(sizeof(uint8_t) * totalLen);
+	*(int*)ptr = VGPU_CUDA_MEMCPY;
+	ptr += sizeof(int);
+
+	*(int *)ptr = len1;
+	ptr += sizeof(int);
+	memcpy(ptr, &dst, len1);
+	ptr += len1;
+
+	// TODO: 像src这种变长数据应该怎样传递给后端
+	// 这就是为什么发送的协议要是(len, data)...
+	// 当然返回的协议可能也是要的: memcpy拷贝回
+	*(int *)ptr = len2;
+	ptr += sizeof(int);
+	memcpy(ptr, &src, len2);
+	ptr += len2;
+
+	*(int *)ptr = len3;
+	ptr += sizeof(int);
+	memcpy(ptr, &count, len3);
+	ptr += len3;
+
+	*(int *)ptr = len4;
+	ptr += sizeof(int);
+	memcpy(ptr, &kind, len4);
+	ptr += len4;
+
+	printf("memcpy src: 0x%x, dst: %p, count: %lu, kind: %d\n", src, dst, count, kind);
+
+	int n = write(client_fd, msg, totalLen);
+	dprintf("client sent done\n");
+	if (n != totalLen) {
+	  printf("FAIL: write len error: %d\n", n);
+	  exit(1);
+	}
+
+	byteHdr *bhdr = byteStream(newBytes(256));
+	byte_t b = bhdr->data;
+	n = read(client_fd, bhdr, 256);
+	byteResize(b, bhdr->len);
+  }
+
+
 
   getchar();
   server.loop->stop = 1;
