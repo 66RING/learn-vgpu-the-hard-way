@@ -5,6 +5,20 @@
 
 #define PORT 8888
 
+uint8_t* newRequest(enum VGPU_COMMAND cmd, int totalLen) {
+	uint8_t *ptr = (uint8_t*)malloc(sizeof(uint8_t) * totalLen);
+	*(int*)ptr = cmd;
+	return ptr;
+}
+
+uint8_t* loading(void* dst, void* src, int len) {
+  *(int*)dst = len;
+  dst += sizeof(int);
+  memcpy(dst, src, len);
+  dst += len;
+  return dst;
+}
+
 // 全局server对象
 server_t server;
 
@@ -343,19 +357,11 @@ int main() {
 
 	// TODO: rebuild
 	// name bullet / loading(装弹)
-	ptr = msg = (uint8_t *)malloc(totalLen);
-	*(int *)ptr = VGPU_CUDA_MALLOC;
-	ptr += sizeof(int);
+	msg = ptr = newRequest(VGPU_CUDA_MALLOC, totalLen);
+	ptr += sizeof(enum VGPU_COMMAND);
 
-	*(int *)ptr = len1;
-	ptr += sizeof(int);
-	memcpy(ptr, &devPtr, len1);
-	ptr += len1;
-
-	*(int *)ptr = len2;
-	ptr += sizeof(int);
-	memcpy(ptr, &size, len2);
-	ptr += len2;
+	ptr = loading(ptr, &devPtr, len1);
+	ptr = loading(ptr, &size, len2);
 
 	int n = write(client_fd, msg, totalLen);
 	dprintf("client sent done\n");
@@ -402,33 +408,19 @@ int main() {
 	  + sizeof(int) + len3
 	  + sizeof(int) + len4;
 
-	ptr = msg = (uint8_t*)malloc(sizeof(uint8_t) * totalLen);
-	*(int*)ptr = VGPU_CUDA_MEMCPY;
-	ptr += sizeof(int);
-
-	*(int *)ptr = len1;
-	ptr += sizeof(int);
-	memcpy(ptr, &dst, len1);
-	ptr += len1;
+	// ptr = msg = (uint8_t*)malloc(sizeof(uint8_t) * totalLen);
+	// *(int*)ptr = VGPU_CUDA_MEMCPY;
+	// ptr += sizeof(int);
+	msg = ptr = newRequest(VGPU_CUDA_MEMCPY, totalLen);
+	ptr += sizeof(enum VGPU_COMMAND);
 
 	// TODO: 像src这种变长数据应该怎样传递给后端
 	// 这就是为什么发送的协议要是(len, data)...
 	// 当然返回的协议可能也是要的: memcpy拷贝回
-	*(int *)ptr = len2;
-	ptr += sizeof(int);
-	memcpy(ptr, &src, len2);
-	ptr += len2;
-
-	*(int *)ptr = len3;
-	ptr += sizeof(int);
-	memcpy(ptr, &count, len3);
-	ptr += len3;
-
-	*(int *)ptr = len4;
-	ptr += sizeof(int);
-	memcpy(ptr, &kind, len4);
-	ptr += len4;
-
+	ptr = loading(ptr, &dst, len1);
+	ptr = loading(ptr, &src, len2);
+	ptr = loading(ptr, &count, len3);
+	ptr = loading(ptr, &kind, len4);
 	printf("memcpy src: 0x%x, dst: %p, count: %lu, kind: %d\n", src, dst, count, kind);
 
 	int n = write(client_fd, msg, totalLen);
