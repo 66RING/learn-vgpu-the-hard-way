@@ -3,25 +3,16 @@
 
 #include "faas.h"
 
-
-// cudaConfigureCall@@libcudart.so.9.0
-// cudaFree@@libcudart.so.9.0
-// __cudaInitModule@@libcudart.so.9.0
-// cudaLaunch@@libcudart.so.9.0
-// cudaMalloc@@libcudart.so.9.0
-// cudaMemcpy@@libcudart.so.9.0
-// __cudaRegisterFatBinary@@libcudart.so.9.0
-// __cudaRegisterFunction@@libcudart.so.9.0
-// cudaSetupArgument@@libcudart.so.9.0
-// cudaThreadSynchronize@@libcudart.so.9.0
-// __cudaUnregisterFatBinary@@libcudart.so.9.0
-
-
 /*
  * API自动根据对接的函数所需的参数解析opaque
  * 参数全都保存到cli中了
  */
-
+ 
+// cudaError_t cudaConfigureCall(
+//         dim3 gridDim,
+//         dim3 blockDim,
+//         size_t sharedMem,
+//         cudaStream_t stream);
 byte_t handleCudaConfigureCall(client_t *cli) {
 	listIter *iter;
 	listNode *node;
@@ -37,6 +28,7 @@ byte_t handleCudaConfigureCall(client_t *cli) {
 	return reply;
 }
 
+// cudaError_t cudaFree (void* devPtr)
 byte_t handleCudaFree(client_t *cli) {
 	listIter *iter;
 	listNode *node;
@@ -45,13 +37,27 @@ byte_t handleCudaFree(client_t *cli) {
 	int replyLen;
 
 	// 实际参数
+	void **devPtr;
+
 	// 解析参数
+	iter = listGetIterator(cli->args, AL_START_HEAD);
+	devPtr = (void *)(listNext(iter)->value);
+
 	// 处理请求
+	dprintf("server: memfree dst: %p\n", *devPtr);
+	// TODO: 暂时用free模拟
+	free(*devPtr);
+
 	// 准备返回
+	cudaError_t err = 1;
+	replyLen = sizeof(cudaError_t);
+	replyPtr = reply = newBytes(replyLen);
+	memcpy(replyPtr, &err, sizeof(cudaError_t));
 
 	return reply;
 }
 
+// char __cudaInitModule(void **fatCubinHandle);
 byte_t handle__cudaInitModule(client_t *cli) {
 	listIter *iter;
 	listNode *node;
@@ -102,7 +108,7 @@ byte_t handleCudaMalloc(client_t *cli) {
 	// 处理响应
 	cudaError_t err = 1;
 	newPtr = malloc(sizeof(uint8_t) * *size);
-	dprintf("malloc size: %lu, return ptr: %p\n", *size, newPtr);
+	dprintf("server: malloc size: %lu, return ptr: %p\n", *size, newPtr);
 
 	// 准备返回
 	// 格式: cudaError_t, void*
@@ -140,12 +146,12 @@ byte_t handleCudaMemcpy(client_t *cli) {
 
 	// 处理请求
 	// TODO: err handling
-	cudaError_t err = 1;
-	dprintf("memcpy dst: %p, dsc: %p, count: %lu, kind: %d\n", *dst, *src, *count, *kind);
+	dprintf("server: memcpy dst: %p, dsc: %p, count: %lu, kind: %d\n", *dst, *src, *count, *kind);
 	memcpy(*dst, src, *count);
-	printf("0x%x\n", *(int*)*dst);
+	dprintf("server get: 0x%x\n", *(int*)*dst);
 
 	// 准备返回
+	cudaError_t err = 1;
 	replyLen = sizeof(cudaError_t);
 	replyPtr = reply = newBytes(replyLen);
 	memcpy(replyPtr, &err, sizeof(cudaError_t));
@@ -153,6 +159,7 @@ byte_t handleCudaMemcpy(client_t *cli) {
 	return reply;
 }
 
+// void** __cudaRegisterFatBinary(void *fatCubin);
 byte_t handle__cudaRegisterFatBinary(client_t *cli) {
 	listIter *iter;
 	listNode *node;
@@ -168,6 +175,18 @@ byte_t handle__cudaRegisterFatBinary(client_t *cli) {
 	return reply;
 }
 
+// void __cudaRegisterFunction(
+//         void   **fatCubinHandle,
+//   const char    *hostFun,
+//         char    *deviceFun,
+//   const char    *deviceName,
+//         int      thread_limit,
+//         uint3   *tid,
+//         uint3   *bid,
+//         dim3    *bDim,
+//         dim3    *gDim,
+//         int     *wSize
+// );
 byte_t handle__cudaRegisterFunction(client_t *cli) {
 	listIter *iter;
 	listNode *node;
@@ -183,6 +202,7 @@ byte_t handle__cudaRegisterFunction(client_t *cli) {
 	return reply;
 }
 
+// cudaError_t cudaSetupArgument (const void *arg, size_t size, size_t offset);
 byte_t handleCudaSetupArgument(client_t *cli) {
 	listIter *iter;
 	listNode *node;
@@ -198,6 +218,8 @@ byte_t handleCudaSetupArgument(client_t *cli) {
 	return reply;
 }
 
+
+// cudaError_t cudaThreadSynchronize (void)
 byte_t handleCudaThreadSynchronize(client_t *cli) {
 	listIter *iter;
 	listNode *node;
@@ -213,6 +235,7 @@ byte_t handleCudaThreadSynchronize(client_t *cli) {
 	return reply;
 }
 
+// void __cudaUnregisterFatBinary(void **fatCubinHandle);
 byte_t handle__cudaUnregisterFatBinary(client_t *cli) {
 	listIter *iter;
 	listNode *node;

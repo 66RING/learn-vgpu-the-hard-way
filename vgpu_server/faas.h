@@ -18,6 +18,8 @@
 
 #include "../protocol/vgpu_common.h"
 
+#define PORT 8888
+
 // TODO: 暂时模拟一下 cuda header
 typedef uint32_t cudaError_t;
 typedef int cudaMemcpyKind;

@@ -3,24 +3,22 @@
 // TODO: rebuild
 #include "gpu.c"
 
-#define PORT 8888
+// 全局server对象
+server_t server;
 
-uint8_t* newRequest(enum VGPU_COMMAND cmd, int totalLen) {
+uint8_t* newRequestBuf(enum VGPU_COMMAND cmd, int totalLen) {
 	uint8_t *ptr = (uint8_t*)malloc(sizeof(uint8_t) * totalLen);
 	*(int*)ptr = cmd;
 	return ptr;
 }
 
-uint8_t* loading(void* dst, void* src, int len) {
+uint8_t* fillBuffer(void* dst, void* src, int len) {
   *(int*)dst = len;
   dst += sizeof(int);
   memcpy(dst, src, len);
   dst += len;
   return dst;
 }
-
-// 全局server对象
-server_t server;
 
 byte_t newBytes(int len) {
   byteHdr *hdr = (byteHdr *)malloc(sizeof(byteHdr) + sizeof(uint8_t) * len);
@@ -162,6 +160,7 @@ void proccessCommand(client_t *cli) {
 	reply = handleCudaMalloc(cli);
     break;
   case VGPU_CUDA_FREE:
+	reply = handleCudaFree(cli);
     break;
   case VGPU_CUDA_MEMCPY:
 	reply = handleCudaMemcpy(cli);
@@ -212,17 +211,23 @@ int countArgc(int cmdType) {
     return 2;
     break;
   case VGPU_CUDA_FREE:
+	return 1;
     break;
   case VGPU_CUDA_MEMCPY:
 	return 4;
     break;
   case VGPU_CUDA_REGISTER_FAT_BINARY:
+	return 1;
     break;
   case VGPU_CUDA_REGISTER_FUNCTION:
+	return 10;
     break;
   case VGPU_CUDA_KERNEL_LAUNCH:
+	// TODO
+	exit(1);
     break;
   case VGPU_CUDA_THREAD_SYNCHRONIZE:
+	return 0;
     break;
   default:
     printf("cmdType undefine");
@@ -326,122 +331,26 @@ void startServer() {
   server.loop = loop;
   server.fd = server_fd;
 
+  aeMain(loop);
+}
+
+void startServerThread() {
+  aeEventLoop *loop;
+  int server_fd;
+
+  // 创建主循环用于服务器的连接监听
+  loop = aeCreateEventLoop();
+  // 创建服务器
+  server_fd = tcpServer(PORT);
+  // 为服务器对象绑定事件循环
+  aeCreateFileEvent(loop, server_fd, AE_READABLE, acceptHandler, NULL, NULL);
+
+  // 初始化server对象
+  server.clients = listCreate();
+  server.loop = loop;
+  server.fd = server_fd;
+
   // 启动server测试
   pthread_t tid;
   pthread_create(&tid, NULL, (void *)_startServer, loop);
-}
-
-int main() {
-  startServer();
-
-  // test
-
-  // **传输协议: cmdType: int, (dataLen: int, data: uint8_t[])...**
-  // 启动client
-  char err[256];
-  char buf[256];
-  int client_fd = anetTcpConnect(err, "0.0.0.0", PORT);
-
-  void* devPtr;
-  {
-	// args
-	size_t size = 10;
-	int len1 = sizeof(void*);
-	int len2 = sizeof(size_t);
-
-	uint8_t *msg;
-	uint8_t *ptr;
-	int totalLen = sizeof(enum VGPU_COMMAND)
-		+ sizeof(int) + len1
-		+ sizeof(int) + len2;
-
-	// TODO: rebuild
-	// name bullet / loading(装弹)
-	msg = ptr = newRequest(VGPU_CUDA_MALLOC, totalLen);
-	ptr += sizeof(enum VGPU_COMMAND);
-
-	ptr = loading(ptr, &devPtr, len1);
-	ptr = loading(ptr, &size, len2);
-
-	int n = write(client_fd, msg, totalLen);
-	dprintf("client sent done\n");
-	if (n != totalLen) {
-	  printf("FAIL: write len error: %d\n", n);
-	  exit(1);
-	}
-
-	byteHdr *bhdr = byteStream(newBytes(256));
-	byte_t b = bhdr->data;
-	n = read(client_fd, bhdr, 256);
-	byteResize(b, bhdr->len);
-	dprintf("sizeof void* %lu\n", sizeof(void*));
-	dprintf("client read done, len: %d, expect len: %lu\n", bhdr->len, sizeof(void*) + sizeof(cudaError_t));
-
-	// byteInspect(b);
-	ptr = b;
-	printf("err code: %d\n", *(cudaError_t*)ptr);
-	ptr += sizeof(cudaError_t);
-	printf("malloc: %p\n", *(void**)ptr);
-	devPtr = *(void**)ptr;
-	ptr += sizeof(void*);
-  }
-
-  {
-	void* dst;
-	dst = devPtr;
-	int len1 = sizeof(void*);
-
-	int src = 0xdeadbeef;
-	int len2 = sizeof(int);
-
-	size_t count = sizeof(int);
-	int len3 = sizeof(size_t);
-
-	cudaMemcpyKind kind = 1;
-	int len4 = sizeof(cudaMemcpyKind);
-
-	uint8_t *msg;
-	uint8_t *ptr;
-	int totalLen = sizeof(enum VGPU_COMMAND)
-	  + sizeof(int) + len1
-	  + sizeof(int) + len2
-	  + sizeof(int) + len3
-	  + sizeof(int) + len4;
-
-	// ptr = msg = (uint8_t*)malloc(sizeof(uint8_t) * totalLen);
-	// *(int*)ptr = VGPU_CUDA_MEMCPY;
-	// ptr += sizeof(int);
-	msg = ptr = newRequest(VGPU_CUDA_MEMCPY, totalLen);
-	ptr += sizeof(enum VGPU_COMMAND);
-
-	// TODO: 像src这种变长数据应该怎样传递给后端
-	// 这就是为什么发送的协议要是(len, data)...
-	// 当然返回的协议可能也是要的: memcpy拷贝回
-	ptr = loading(ptr, &dst, len1);
-	ptr = loading(ptr, &src, len2);
-	ptr = loading(ptr, &count, len3);
-	ptr = loading(ptr, &kind, len4);
-	printf("memcpy src: 0x%x, dst: %p, count: %lu, kind: %d\n", src, dst, count, kind);
-
-	int n = write(client_fd, msg, totalLen);
-	dprintf("client sent done\n");
-	if (n != totalLen) {
-	  printf("FAIL: write len error: %d\n", n);
-	  exit(1);
-	}
-
-	byteHdr *bhdr = byteStream(newBytes(256));
-	byte_t b = bhdr->data;
-	n = read(client_fd, bhdr, 256);
-	byteResize(b, bhdr->len);
-  }
-
-
-
-  getchar();
-  server.loop->stop = 1;
-  dprintf("server stop\n");
-  // printf("PASS");
-
-  return 0;
 }

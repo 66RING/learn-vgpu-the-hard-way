@@ -12,7 +12,6 @@
 #include "faas.h"
 #include "anet.h"
 
-#define PORT 8888
 
 #if 0
 	#define dprintf(fmt, arg...) printf("DEBUG: "fmt, ##arg)
@@ -63,27 +62,16 @@ void acceptProc(struct aeEventLoop *eventLoop, int fd, void *clientData, int mas
 }
 
 
-static void _startServer(void *arg) {
+void startServer(void *arg) {
 	aeEventLoop *loop = arg;
 	aeMain(loop);
 }
 
+char server_id[] = "0.0.0.0";
+#define PORT 8888
+
+// 假设server已经启动
 int main() {
-	aeEventLoop *loop;
-	int server_fd;
-
-	// 创建主循环用于服务器的连接监听
-	loop = aeCreateEventLoop();
-	// 创建服务器
-	server_fd = tcpServer(PORT);
-	// 为服务器对象绑定事件循环
-	aeCreateFileEvent(loop, server_fd, AE_READABLE, acceptProc, NULL, NULL);
-
-	// 启动server测试
-	pthread_t tid;
-	pthread_create(&tid, NULL, (void *)_startServer, loop);
-
-
 	// 启动client
 	char err[256];
 	char msg[] = "helloworld\0";
@@ -109,3 +97,4 @@ int main() {
 	dprintf("server stop\n");
 	printf("PASS");
 }
+
