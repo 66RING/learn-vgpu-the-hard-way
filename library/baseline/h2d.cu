@@ -32,7 +32,9 @@ int main() {
         }
 
 
+        auto start = chrono::steady_clock::now();
         cudaMemcpy(dx, hx, nbytes, cudaMemcpyHostToDevice);
+        auto end = chrono::steady_clock::now();
 
         // call GPU
         sum<<<1, nbytes>>>(dx);
@@ -41,14 +43,12 @@ int main() {
         cudaThreadSynchronize();
 
 
-        auto start = chrono::steady_clock::now();
         cudaMemcpy(hx, dx, nbytes, cudaMemcpyDeviceToHost);
-        auto end = chrono::steady_clock::now();
 
 
         cout << "size(B): " << nbytes << ","
              << chrono::duration_cast<chrono::microseconds>(end - start).count()
-             << " µs" << endl;
+             << ", us" << endl;
 
         // free(p);
       }

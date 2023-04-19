@@ -24,7 +24,7 @@ int main() {
 
         cout << "size(B): " << nbytes << ","
              << chrono::duration_cast<chrono::microseconds>(end - start).count()
-             << " µs" << endl;
+             << ", us" << endl;
 
         // free(p);
       }

@@ -24,6 +24,7 @@ int main() {
       for (int i = minbyte; i<=maxbyte; i *= 2) {
         int nbytes = i;
 
+        auto start = chrono::steady_clock::now();
         cudaMalloc((void**)&dx, nbytes);
         hx = (char*)malloc(nbytes);
 
@@ -35,17 +36,16 @@ int main() {
         cudaMemcpy(dx, hx, nbytes, cudaMemcpyHostToDevice);
 
         // call GPU
-        auto start = chrono::steady_clock::now();
         sum<<<1, nbytes>>>(dx);
 
         // let gpu finish
         cudaThreadSynchronize();
-        auto end = chrono::steady_clock::now();
 
 
         cudaMemcpy(hx, dx, nbytes, cudaMemcpyDeviceToHost);
 
 
+        auto end = chrono::steady_clock::now();
         cout << "size(B): " << nbytes << ","
              << chrono::duration_cast<chrono::microseconds>(end - start).count()
              << ", us" << endl;
