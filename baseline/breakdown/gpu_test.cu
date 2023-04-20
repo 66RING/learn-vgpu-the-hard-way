@@ -23,34 +23,40 @@ int main() {
 
       for (int i = minbyte; i<=maxbyte; i *= 2) {
         int nbytes = i;
+		int loop = 1000;
+		double total_time = 0;
 
-        cudaMalloc((void**)&dx, nbytes);
-        hx = (char*)malloc(nbytes);
+		for (int w = 0; w < loop; w++) {
+			auto start = chrono::steady_clock::now();
 
-        for(int j=0;j<nbytes;j++) {
-            hx[j] = j % 256;
-        }
+			cudaMalloc((void**)&dx, nbytes);
+			hx = (char*)malloc(nbytes);
 
-
-        cudaMemcpy(dx, hx, nbytes, cudaMemcpyHostToDevice);
-
-        // call GPU
-        sum<<<1, nbytes>>>(dx);
-
-        // let gpu finish
-        cudaThreadSynchronize();
+			for(int j=0;j<nbytes;j++) {
+				hx[j] = j % 256;
+			}
 
 
-        auto start = chrono::steady_clock::now();
-        cudaMemcpy(hx, dx, nbytes, cudaMemcpyDeviceToHost);
-        auto end = chrono::steady_clock::now();
+			cudaMemcpy(dx, hx, nbytes, cudaMemcpyHostToDevice);
 
+			// call GPU
+			sum<<<1, nbytes>>>(dx);
 
+			// let gpu finish
+			cudaThreadSynchronize();
+
+			cudaMemcpy(hx, dx, nbytes, cudaMemcpyDeviceToHost);
+
+			auto end = chrono::steady_clock::now();
+
+			total_time += chrono::duration_cast<chrono::microseconds>(end - start).count();
+
+			cudaFree(dx);
+			free(hx);
+		}
         cout << "size(B): " << nbytes << ","
-             << chrono::duration_cast<chrono::microseconds>(end - start).count()
+             << total_time / loop
              << ", us" << endl;
-
-        // free(p);
       }
 
 
@@ -59,4 +65,5 @@ int main() {
     //free(hx);
     return 0;
 }
+
 
